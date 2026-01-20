@@ -43,3 +43,34 @@ The CoSAI Risk Map includes mappings to established security frameworks, enablin
 These mappings allow organizations to align CoSAI risks and controls with existing security standards and compliance requirements. Framework references are automatically validated to ensure consistency across the risk map.
 
 [Explore the full CoSAI Risk Map project here...](./risk-map/)
+
+---
+
+## **Streamlit Web Application**
+
+This repository includes an interactive Streamlit web application that provides a 3-step assessment workflow:
+
+1. **🔍 Assessment** - Answer questions about your AI implementation
+2. **🛡️ Control Mapping** - View recommended security controls based on identified risks  
+3. **📊 Risk Analysis** - Explore detailed information about risks and mitigation strategies
+
+### Quick Start
+
+1. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. Run the application:
+   ```bash
+   streamlit run streamlit_app.py
+   ```
+   
+   Or use the convenience script:
+   ```bash
+   ./run_app.sh
+   ```
+
+3. Open your browser to `http://localhost:8501`
+
+For more details, see [APP_README.md](./APP_README.md).
