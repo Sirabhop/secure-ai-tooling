@@ -254,3 +254,314 @@ selfAssessment:
       relevance:
         - Yes
         - Maybe
+
+
+vayuAssessment:
+  title: Vayu Assessment
+  description:
+    - This assessment assigns a baseline tier from use case category and then applies risk driver checks.
+    - Final tier is the maximum tier triggered by baseline gates and escalation rules.
+    - Baseline tier is computed as the maximum baselineTier across selected use cases, unless a baseline gate escalates it.
+  tiers:
+    - label: low
+      value: 1
+    - label: medium
+      value: 2
+    - label: high
+      value: 3
+    - label: unacceptable
+      value: 4
+
+  useCases:
+    multipleChoice: true
+    text:
+      - Select all that describe this AI system.
+    answers:
+      - label: customerEligibilityOrCreditDecisions
+        value: 1
+        baselineTier: high
+      - label: financialCrimePrevention
+        value: 2
+        baselineTier: high
+      - label: financialAndRiskManagementDecision
+        value: 3
+        baselineTier: high
+      - label: customerInfluenceAndRecommendations
+        value: 4
+        baselineTier: medium
+      - label: customerCommunicationAndService
+        value: 5
+        baselineTier: medium
+      - label: internalCopilotWithSensitiveData
+        value: 6
+        baselineTier: medium
+      - label: lowRiskInternalProductivity
+        value: 7
+        baselineTier: low
+      - label: aiThatInfluencesOtherAi
+        value: 8
+        baselineTier: medium
+
+  questions:
+    # Baseline tier gates, short circuit order
+    - id: G1
+      text:
+        - Prohibited characteristics
+        - Does the system do social scoring for access to services, subliminal manipulation, or exploit vulnerable groups with unfair outcomes.
+      answers:
+        - label: Yes
+          value: 1
+        - label: No
+          value: 2
+        - label: Maybe
+          value: 3
+      baselineGate:
+        if_answer_in:
+          - Yes
+          - Maybe
+        then_tier: unacceptable
+      tags:
+        - baseline
+        - prohibited
+
+    - id: G2
+      text:
+        - High impact domain
+        - Is the system used for credit assessment or access to financial services, HR decisions, insurance pricing, trading supervision that can block transactions, critical infrastructure safety, remote biometric identification, biometric categorization on protected attributes, or emotion recognition.
+      answers:
+        - label: Yes
+          value: 1
+        - label: No
+          value: 2
+        - label: Maybe
+          value: 3
+      baselineGate:
+        if_answer_in:
+          - Yes
+          - Maybe
+        then_tier: high
+      tags:
+        - baseline
+        - highImpact
+
+    - id: G3
+      text:
+        - Transparency risk
+        - Could a reasonable user be unaware they are interacting with AI or AI generated content, such as chatbot, deepfake, or generated content.
+      answers:
+        - label: Yes
+          value: 1
+        - label: No
+          value: 2
+        - label: Maybe
+          value: 3
+      baselineGate:
+        if_answer_in:
+          - Yes
+          - Maybe
+        then_tier: medium
+      tags:
+        - baseline
+        - transparency
+
+    # Risk driver group checks
+    - id: RD1
+      text:
+        - External exposure of outputs
+        - Can any output reach customers, the public, or external parties.
+      answers:
+        - label: Yes
+          value: 1
+        - label: No
+          value: 2
+        - label: Maybe
+          value: 3
+      driver: externalExposure
+      relevance:
+        - Yes
+        - Maybe
+      tags:
+        - riskDriver
+
+    - id: RD2
+      text:
+        - Sensitive data and privacy
+        - Does it process sensitive or protected personal data, infer sensitive attributes, or use personal data without full prior informed consent.
+      answers:
+        - label: Yes
+          value: 1
+        - label: No
+          value: 2
+        - label: Maybe
+          value: 3
+      driver: sensitiveDataOrConsent
+      relevance:
+        - Yes
+        - Maybe
+      tags:
+        - riskDriver
+
+    - id: RD3
+      text:
+        - Autonomy and action taking
+        - Are outputs used for critical decisions without human oversight, or does the system take actions via tools or agents, or interact with the physical environment.
+      answers:
+        - label: Yes
+          value: 1
+        - label: No
+          value: 2
+        - label: Maybe
+          value: 3
+      driver: autonomyOrActions
+      relevance:
+        - Yes
+        - Maybe
+      tags:
+        - riskDriver
+
+    - id: RD4
+      text:
+        - Harmful or regulated content
+        - Could the system handle or produce hate, harassment, deception, misinformation, violence, self harm related content, extremism, malware, or sexually explicit content.
+      answers:
+        - label: Yes
+          value: 1
+        - label: No
+          value: 2
+        - label: Maybe
+          value: 3
+      driver: harmfulContent
+      relevance:
+        - Yes
+        - Maybe
+      tags:
+        - riskDriver
+
+    - id: RD5
+      text:
+        - Business criticality and governance
+        - Does it support regulated banking functions, create material operational risk, or conflict with code of conduct or acceptable use policy.
+      answers:
+        - label: Yes
+          value: 1
+        - label: No
+          value: 2
+        - label: Maybe
+          value: 3
+      driver: governanceAndCriticality
+      relevance:
+        - Yes
+        - Maybe
+      tags:
+        - riskDriver
+
+    # Control check, response filtering
+    - id: C1
+      text:
+        - Response filtering
+        - Are outputs enforced through response filtering that blocks disallowed content and redacts sensitive data, with logging and monitoring.
+      answers:
+        - label: Yes
+          value: 1
+        - label: No
+          value: 2
+        - label: Partial
+          value: 3
+      control: responseFiltering
+      relevance:
+        - No
+        - Partial
+      tags:
+        - control
+
+  scoring:
+    baseline:
+      defaultTier: low
+      useCaseBaseline:
+        method:
+          - If one or more use cases are selected, baseline tier is the maximum baselineTier across selections.
+          - If no use case is selected, baseline tier is defaultTier.
+        aggregation: max
+      gateOrder:
+        - G1
+        - G2
+        - G3
+      method:
+        - Compute baseline tier from use case selection.
+        - Apply baseline gates in order.
+        - Each matching gate sets minimum baseline tier to the gate tier.
+        - Final baseline is the maximum of useCaseBaseline and any gate tiers.
+
+    escalationRules:
+      - id: E1
+        text: External exposure without response filtering escalates to high.
+        when:
+          all:
+            - driver: externalExposure
+              in_answers:
+                - Yes
+                - Maybe
+            - control: responseFiltering
+              in_answers:
+                - No
+                - Partial
+        then:
+          set_minimum_tier: high
+
+      - id: E2
+        text: Harmful content potential without response filtering escalates to high.
+        when:
+          all:
+            - driver: harmfulContent
+              in_answers:
+                - Yes
+                - Maybe
+            - control: responseFiltering
+              in_answers:
+                - No
+                - Partial
+        then:
+          set_minimum_tier: high
+
+      - id: E3
+        text: Autonomy or actions without strong controls escalates to high.
+        when:
+          all:
+            - driver: autonomyOrActions
+              in_answers:
+                - Yes
+                - Maybe
+            - control: responseFiltering
+              in_answers:
+                - No
+                - Partial
+        then:
+          set_minimum_tier: high
+
+      - id: E4
+        text: Sensitive data or consent gaps set minimum tier to medium.
+        when:
+          any:
+            - driver: sensitiveDataOrConsent
+              in_answers:
+                - Yes
+                - Maybe
+        then:
+          set_minimum_tier: medium
+
+      - id: E5
+        text: Governance and criticality set minimum tier to medium.
+        when:
+          any:
+            - driver: governanceAndCriticality
+              in_answers:
+                - Yes
+                - Maybe
+        then:
+          set_minimum_tier: medium
+
+    finalTier:
+      method:
+        - Start with baseline tier from scoring.baseline.
+        - Apply all escalation rules.
+        - Final tier is the maximum of baseline and all set_minimum_tier outcomes.

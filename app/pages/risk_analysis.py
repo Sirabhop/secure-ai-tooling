@@ -7,8 +7,7 @@ def render_risk_analysis():
     """Render the risk analysis page."""
     st.title("📊 Risk Analysis & Control Details")
     st.markdown("---")
-    
-    # Check if assessment is complete
+
     if 'answers' not in st.session_state or not st.session_state.answers:
         render_info_box(
             "Please complete the assessment first to view detailed risk analysis.",
@@ -18,9 +17,25 @@ def render_risk_analysis():
             st.session_state.current_page = "Assessment"
             st.rerun()
         return
-    
+
     loader = st.session_state.data_loader
-    
+
+    # Tier summary
+    vayu = st.session_state.get("vayu_result")
+    if not vayu:
+        try:
+            vayu = loader.calculate_vayu_tier(
+                st.session_state.get("selected_use_cases", []),
+                st.session_state.answers,
+            )
+        except Exception:
+            vayu = {}
+    if vayu and vayu.get("escalatedRules"):
+        with st.expander("Escalation triggers", expanded=False):
+            for r in vayu["escalatedRules"]:
+                st.markdown(f"- {r}")
+        st.markdown("---")
+
     # Get relevant risks
     if 'relevant_risks' not in st.session_state:
         try:

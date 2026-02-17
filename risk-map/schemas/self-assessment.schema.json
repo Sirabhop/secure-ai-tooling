@@ -5,10 +5,22 @@
   "description": "Schema for validating YAML-based self-assessment definition",
   "type": "object",
   "properties": {
-    "selfAssessment": { "$ref": "#/definitions/selfAssessment" }
+    "selfAssessment": { "$ref": "#/definitions/selfAssessment" },
+    "vayuAssessment": { "$ref": "#/definitions/vayuAssessment" }
   },
   "required": ["selfAssessment"],
   "definitions": {
+    "vayuAssessment": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "$ref": "riskmap.schema.json#/definitions/utils/text" },
+        "tiers": { "type": "array" },
+        "useCases": { "type": "object" },
+        "questions": { "type": "array" },
+        "scoring": { "type": "object" }
+      }
+    },
     "selfAssessment": {
       "type": "object",
       "properties": {

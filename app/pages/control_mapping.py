@@ -7,8 +7,7 @@ def render_control_mapping():
     """Render the control mapping page."""
     st.title("🛡️ Control Mapping")
     st.markdown("---")
-    
-    # Check if assessment is complete
+
     if 'answers' not in st.session_state or not st.session_state.answers:
         render_info_box(
             "Please complete the assessment first to view recommended controls.",
@@ -18,10 +17,30 @@ def render_control_mapping():
             st.session_state.current_page = "Assessment"
             st.rerun()
         return
-    
+
     loader = st.session_state.data_loader
-    
-    # Calculate relevant risks if not already done
+
+    # Tier summary (from context questions)
+    vayu = st.session_state.get("vayu_result")
+    if not vayu:
+        try:
+            vayu = loader.calculate_vayu_tier(
+                st.session_state.get("selected_use_cases", []),
+                st.session_state.answers,
+            )
+        except Exception:
+            vayu = {}
+    if vayu:
+        tier = vayu.get("label", "low").upper()
+        tier_colors = {"LOW": "green", "MEDIUM": "orange", "HIGH": "red", "UNACCEPTABLE": "red"}
+        st.metric("Risk Tier", tier)
+        render_badge(tier, tier_colors.get(tier, "gray"))
+        if vayu.get("escalatedRules"):
+            with st.expander("Escalation triggers", expanded=False):
+                for r in vayu["escalatedRules"]:
+                    st.markdown(f"- {r}")
+        st.markdown("---")
+
     if 'relevant_risks' not in st.session_state:
         try:
             st.session_state.relevant_risks = loader.calculate_relevant_risks(
@@ -31,17 +50,22 @@ def render_control_mapping():
         except Exception as e:
             st.error(f"Error calculating risks: {str(e)}")
             return
-    
+
     relevant_risks = st.session_state.relevant_risks
-    
+
     if not relevant_risks:
         render_info_box(
             "Based on your answers, no specific risks were identified. "
             "This may indicate your organization has good security practices in place.",
             "success"
         )
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔙 Back to Assessment", use_container_width=True):
+                st.session_state.current_page = "Assessment"
+                st.rerun()
         return
-    
+
     # Get controls for these risks
     try:
         controls = loader.get_controls_for_risks(relevant_risks)

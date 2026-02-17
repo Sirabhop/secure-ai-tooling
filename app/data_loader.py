@@ -136,6 +136,129 @@ class RiskMapDataLoader:
     def get_persona_question(self) -> Dict[str, Any]:
         """Get persona selection question."""
         return self.self_assessment.get('selfAssessment', {}).get('personas', {})
+
+    # --- Vayu Assessment ---
+    def get_vayu_config(self) -> Dict[str, Any]:
+        """Get Vayu assessment config (tiers, useCases, questions, scoring)."""
+        return self.self_assessment.get('vayuAssessment', {})
+
+    def get_vayu_use_cases(self) -> Dict[str, Any]:
+        """Get Vayu use case selection question."""
+        return self.get_vayu_config().get('useCases', {})
+
+    def get_vayu_questions(self) -> List[Dict[str, Any]]:
+        """Get Vayu assessment questions."""
+        return self.get_vayu_config().get('questions', [])
+
+    def get_vayu_tiers(self) -> List[Dict[str, Any]]:
+        """Get Vayu tier definitions."""
+        return self.get_vayu_config().get('tiers', [])
+
+    def calculate_vayu_tier(
+        self,
+        use_case_selections: List[str],
+        answers: Dict[str, str],
+    ) -> Dict[str, Any]:
+        """
+        Calculate Vayu tier from use case selections and question answers.
+        Returns dict with tier, label, baselineTier, escalatedRules, and method.
+        """
+        config = self.get_vayu_config()
+        if not config:
+            return {'tier': 1, 'label': 'low', 'baselineTier': 1, 'escalatedRules': [], 'method': []}
+
+        tiers = {t['label']: t['value'] for t in config.get('tiers', [])}
+        scoring = config.get('scoring', {})
+        baseline_cfg = scoring.get('baseline', {})
+        escalation_rules = scoring.get('escalationRules', [])
+        questions_by_id = {q['id']: q for q in self.get_vayu_questions()}
+        q_by_driver = {q.get('driver'): q['id'] for q in questions_by_id.values() if q.get('driver')}
+        q_by_control = {q.get('control'): q['id'] for q in questions_by_id.values() if q.get('control')}
+
+        # 1. Use case baseline
+        default_tier = baseline_cfg.get('defaultTier', 'low')
+        baseline_value = tiers.get(default_tier, 1)
+        if use_case_selections:
+            for ans in self.get_vayu_use_cases().get('answers', []):
+                if ans.get('label') in use_case_selections and 'baselineTier' in ans:
+                    tval = tiers.get(ans['baselineTier'], 1)
+                    baseline_value = max(baseline_value, tval)
+
+        # 2. Baseline gates
+        gate_order = baseline_cfg.get('gateOrder', [])
+        for gate_id in gate_order:
+            q = questions_by_id.get(gate_id)
+            if not q:
+                continue
+            q_id = q['id']
+            if q_id not in answers:
+                continue
+            gate = q.get('baselineGate', {})
+            if_answer_in = set(gate.get('if_answer_in', []))
+            if answers.get(q_id) in if_answer_in:
+                then_tier = gate.get('then_tier', 'low')
+                baseline_value = max(baseline_value, tiers.get(then_tier, 1))
+
+        final_value = baseline_value
+        escalated_rules = []
+
+        def _answer_matches(ans: Any, in_answers: List[Any]) -> bool:
+            """Match answer to in_answers (handles YAML Yes/No -> True/False)."""
+            if ans is None:
+                return False
+            normalized = list(in_answers) if in_answers else []
+            if True in normalized and "Yes" not in normalized:
+                normalized.append("Yes")
+            if False in normalized and "No" not in normalized:
+                normalized.append("No")
+            return ans in normalized
+
+        # 3. Escalation rules
+        for rule in escalation_rules:
+            when = rule.get('when', {})
+            then = rule.get('then', {})
+            min_tier = tiers.get(then.get('set_minimum_tier', 'low'), 1)
+
+            if 'all' in when:
+                all_ok = True
+                for cond in when['all']:
+                    if 'driver' in cond:
+                        q_id = q_by_driver.get(cond['driver'])
+                    elif 'control' in cond:
+                        q_id = q_by_control.get(cond['control'])
+                    else:
+                        all_ok = False
+                        break
+                    if not q_id or not _answer_matches(answers.get(q_id), cond.get('in_answers', [])):
+                        all_ok = False
+                        break
+                if all_ok:
+                    final_value = max(final_value, min_tier)
+                    escalated_rules.append(rule.get('text', rule.get('id', '')))
+            elif 'any' in when:
+                any_ok = False
+                for cond in when['any']:
+                    if 'driver' in cond:
+                        q_id = q_by_driver.get(cond['driver'])
+                    elif 'control' in cond:
+                        q_id = q_by_control.get(cond['control'])
+                    else:
+                        continue
+                    if q_id and _answer_matches(answers.get(q_id), cond.get('in_answers', [])):
+                        any_ok = True
+                        break
+                if any_ok:
+                    final_value = max(final_value, min_tier)
+                    escalated_rules.append(rule.get('text', rule.get('id', '')))
+
+        label = next((t['label'] for t in config.get('tiers', []) if t['value'] == final_value), 'low')
+        return {
+            'tier': final_value,
+            'label': label,
+            'baselineTier': baseline_value,
+            'escalatedRules': escalated_rules,
+            'method': config.get('scoring', {}).get('finalTier', {}).get('method', []),
+        }
     
     def calculate_relevant_risks(self, answers: Dict[str, str], selected_personas: List[str]) -> List[str]:
         """Calculate which risks are relevant based on answers."""

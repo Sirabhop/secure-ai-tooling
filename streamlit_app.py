@@ -45,6 +45,12 @@ if 'answers' not in st.session_state:
 if 'selected_personas' not in st.session_state:
     st.session_state.selected_personas = []
 
+if 'selected_use_cases' not in st.session_state:
+    st.session_state.selected_use_cases = []
+
+if 'vayu_result' not in st.session_state:
+    st.session_state.vayu_result = None
+
 if 'current_page' not in st.session_state:
     st.session_state.current_page = "Home"
 
@@ -73,17 +79,13 @@ st.sidebar.markdown("---")
 # Assessment progress indicator
 if st.session_state.answers:
     loader = st.session_state.data_loader
-    all_questions = loader.get_questions()
-    relevant_questions = [
-        q for q in all_questions 
-        if any(p in st.session_state.selected_personas for p in q.get('personas', []))
-    ]
-    answered_count = len(st.session_state.answers)
-    total_count = len(relevant_questions)
-    
+    vayu_q = loader.get_vayu_questions()
+    all_q = loader.get_questions()
+    risk_q = [q for q in all_q if any(p in st.session_state.selected_personas for p in q.get("personas", []))]
+    total_count = len(vayu_q) + len(risk_q)
+    answered_count = sum(1 for q in vayu_q + risk_q if q.get("id") in st.session_state.answers)
     if total_count > 0:
-        progress = answered_count / total_count
-        st.sidebar.progress(progress)
+        st.sidebar.progress(answered_count / total_count)
         st.sidebar.caption(f"Assessment: {answered_count}/{total_count}")
 
 st.sidebar.markdown("---")
@@ -188,14 +190,28 @@ if page == "Home":
         st.markdown("---")
         with st.expander("📊 Your Assessment Progress", expanded=False):
             loader = st.session_state.data_loader
-            relevant_risks = loader.calculate_relevant_risks(
-                st.session_state.answers,
-                st.session_state.selected_personas
-            )
-            col1, col2 = st.columns(2)
+            vayu = st.session_state.get("vayu_result")
+            if not vayu:
+                try:
+                    vayu = loader.calculate_vayu_tier(
+                        st.session_state.get("selected_use_cases", []),
+                        st.session_state.answers,
+                    )
+                except Exception:
+                    vayu = {"label": "—"}
+            try:
+                relevant_risks = loader.calculate_relevant_risks(
+                    st.session_state.answers,
+                    st.session_state.selected_personas,
+                )
+            except Exception:
+                relevant_risks = []
+            col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Questions Answered", len(st.session_state.answers))
             with col2:
+                st.metric("Risk Tier", vayu.get("label", "—").upper())
+            with col3:
                 st.metric("Risks Identified", len(relevant_risks))
 
 elif page == "Assessment":
