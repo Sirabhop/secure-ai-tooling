@@ -1,239 +1,169 @@
 """Main Streamlit app for CoSAI Risk Map."""
-import streamlit as st
 import sys
 from pathlib import Path
 
-# Add app directory to path
-sys.path.insert(0, str(Path(__file__).parent))
-from app.data_loader import RiskMapDataLoader, DataLoadError
-from app.ui_utils import inject_custom_css, render_info_box
+import streamlit as st
 
-# Page config
+sys.path.insert(0, str(Path(__file__).parent))
+from app.data_loader import DataLoadError, RiskMapDataLoader
+from app.ui_utils import inject_custom_css
+
+# ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="CoSAI Risk Map",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
-        'Get Help': None,
-        'Report a bug': None,
-        'About': "CoSAI Risk Map - Coalition for Secure AI Risk Assessment Tool"
-    }
+        "Get Help": None,
+        "Report a bug": None,
+        "About": "CoSAI Risk Map – Coalition for Secure AI Risk Assessment Tool",
+    },
 )
 
-# Inject custom CSS
 inject_custom_css()
 
-# Initialize session state
-if 'data_loader' not in st.session_state:
+# ── Session state defaults ───────────────────────────────────────────────────
+_DEFAULTS = {
+    "data_loader": None,
+    "answers": {},
+    "selected_personas": [],
+    "selected_use_cases": [],
+    "vayu_result": None,
+    "relevant_risks": [],
+    "recommended_controls": [],
+    "current_page": "Home",
+    "assessment_step": 0,
+}
+for key, default in _DEFAULTS.items():
+    if key not in st.session_state:
+        st.session_state[key] = default
+
+# ── Data loader ──────────────────────────────────────────────────────────────
+if st.session_state.data_loader is None:
     try:
         st.session_state.data_loader = RiskMapDataLoader()
-        # Validate data loading
         if st.session_state.data_loader.has_load_errors():
             errors = st.session_state.data_loader.get_load_errors()
-            st.error(f"⚠️ Data loading errors detected: {', '.join(errors.keys())}")
+            st.error(f"Data loading errors: {', '.join(errors.keys())}")
     except DataLoadError as e:
-        st.error(f"❌ Failed to initialize data loader: {str(e)}")
+        st.error(f"Failed to initialize data loader: {e}")
         st.stop()
     except Exception as e:
-        st.error(f"❌ Unexpected error initializing application: {str(e)}")
+        st.error(f"Unexpected error: {e}")
         st.stop()
 
-if 'answers' not in st.session_state:
-    st.session_state.answers = {}
+# ── Sidebar ──────────────────────────────────────────────────────────────────
+NAV = ["Home", "Assessment", "Results"]
 
-if 'selected_personas' not in st.session_state:
-    st.session_state.selected_personas = []
-
-if 'selected_use_cases' not in st.session_state:
-    st.session_state.selected_use_cases = []
-
-if 'vayu_result' not in st.session_state:
-    st.session_state.vayu_result = None
-
-if 'current_page' not in st.session_state:
-    st.session_state.current_page = "Home"
-
-# Sidebar navigation
-st.sidebar.title("🛡️ CoSAI Risk Map")
-st.sidebar.markdown("---")
-
-# Navigation menu
-nav_options = ["Home", "Assessment", "Control Mapping", "Risk Analysis"]
-try:
-    current_index = nav_options.index(st.session_state.current_page)
-except ValueError:
-    current_index = 0
-
-page = st.sidebar.radio(
-    "Navigation",
-    nav_options,
-    index=current_index,
-    label_visibility="visible"
-)
-
-st.session_state.current_page = page
-
-st.sidebar.markdown("---")
-
-# Assessment progress indicator
-if st.session_state.answers:
-    loader = st.session_state.data_loader
-    vayu_q = loader.get_vayu_questions()
-    all_q = loader.get_questions()
-    risk_q = [q for q in all_q if any(p in st.session_state.selected_personas for p in q.get("personas", []))]
-    total_count = len(vayu_q) + len(risk_q)
-    answered_count = sum(1 for q in vayu_q + risk_q if q.get("id") in st.session_state.answers)
-    if total_count > 0:
-        st.sidebar.progress(answered_count / total_count)
-        st.sidebar.caption(f"Assessment: {answered_count}/{total_count}")
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("""
-### About
-The **Coalition for Secure AI Risk Map** helps identify and mitigate security risks in AI systems.
-
-[Learn More](https://github.com/CoalitionForSecureAI/secure-ai-tooling)
-""")
-
-# Route to appropriate page
-if page == "Home":
-    st.title("🛡️ Coalition for Secure AI Risk Map")
+with st.sidebar:
+    st.markdown("### 🛡️ CoSAI Risk Map")
+    st.caption("Coalition for Secure AI")
     st.markdown("---")
-    
-    # Hero section
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.markdown("""
-        ### Welcome to the CoSAI Risk Assessment Tool
-        
-        This interactive tool helps you assess your AI security posture and identify 
-        relevant risks and controls for your organization.
-        """)
-    
-    with col2:
+
+    try:
+        nav_index = NAV.index(st.session_state.current_page)
+    except ValueError:
+        nav_index = 0
+
+    page = st.radio("Navigate", NAV, index=nav_index, label_visibility="collapsed")
+    st.session_state.current_page = page
+
+    # Progress summary
+    if st.session_state.answers:
         loader = st.session_state.data_loader
-        total_risks = len(loader.risks)
-        total_controls = len(loader.controls)
-        st.metric("Risks Cataloged", total_risks)
-        st.metric("Controls Available", total_controls)
-    
+        vayu_q = loader.get_vayu_questions()
+        all_q = loader.get_questions()
+        risk_q = [
+            q for q in all_q
+            if any(p in st.session_state.selected_personas for p in q.get("personas", []))
+        ]
+        total = len(vayu_q) + len(risk_q)
+        answered = sum(1 for q in vayu_q + risk_q if q.get("id") in st.session_state.answers)
+        if total > 0:
+            st.markdown("---")
+            st.progress(answered / total)
+            st.caption(f"{answered}/{total} questions answered")
+
     st.markdown("---")
-    
-    # How it works section
-    st.subheader("📋 How It Works")
+    st.caption("[Learn more on GitHub](https://github.com/CoalitionForSecureAI/secure-ai-tooling)")
+
+# ── Page routing ─────────────────────────────────────────────────────────────
+if page == "Home":
+    loader = st.session_state.data_loader
+
+    st.title("🛡️ CoSAI Risk Map")
+    st.markdown(
+        "Identify and mitigate security risks in your AI systems with an "
+        "interactive, guided assessment."
+    )
+
     col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("""
-        #### 🔍 Step 1: Assessment
-        Answer questions about your AI implementation based on your role.
-        """)
-    
-    with col2:
-        st.markdown("""
-        #### 🛡️ Step 2: Control Mapping
-        View recommended security controls that address your identified risks.
-        """)
-    
-    with col3:
-        st.markdown("""
-        #### 📊 Step 3: Risk Analysis
-        Explore detailed information about risks and mitigation strategies.
-        """)
-    
+    col1.metric("Risks Cataloged", len(loader.risks))
+    col2.metric("Controls Available", len(loader.controls))
+    col3.metric("Frameworks Mapped", 4)
+
     st.markdown("---")
-    
-    # Information sections
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        with st.container():
-            st.markdown("""
-            ### 🎯 About CoSAI Risk Map
-            
-            The **Coalition for Secure AI Risk Map** provides a comprehensive framework 
-            for identifying, analyzing, and mitigating security risks in AI systems.
-            
-            **Key Elements:**
-            - **Components**: Fundamental building blocks of AI systems
-            - **Risks**: Potential security threats and vulnerabilities
-            - **Controls**: Security measures to mitigate risks
-            - **Personas**: Key roles (Model Creator, Model Consumer)
-            """)
-    
-    with col2:
-        with st.container():
-            st.markdown("""
-            ### 🔗 Framework Mappings
-            
-            The CoSAI Risk Map includes mappings to established security frameworks:
-            
-            - **MITRE ATLAS** - Adversarial Threat Landscape for AI Systems
-            - **NIST AI RMF** - NIST Artificial Intelligence Risk Management Framework
-            - **STRIDE** - Microsoft Threat Modeling Framework
-            - **OWASP Top 10 for LLM** - Top security risks for Large Language Models
-            """)
-    
+    st.subheader("How it works")
+    cols = st.columns(3)
+    info = [
+        ("1. Setup", "Pick your use cases and roles — takes 30 seconds."),
+        ("2. Assess", "Answer context and risk questions tailored to your profile."),
+        ("3. Results", "Get your risk tier, identified risks, and recommended controls."),
+    ]
+    for col, (title, desc) in zip(cols, info):
+        with col:
+            st.markdown(f"**{title}**")
+            st.caption(desc)
+
     st.markdown("---")
-    
-    # CTA section
+
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        if st.button("🚀 Start Assessment", type="primary", use_container_width=True):
+        if st.button("Start Assessment", type="primary", use_container_width=True):
             st.session_state.current_page = "Assessment"
+            st.session_state.assessment_step = 0
             st.rerun()
-    
-    # Quick stats if assessment started
+
     if st.session_state.answers:
         st.markdown("---")
-        with st.expander("📊 Your Assessment Progress", expanded=False):
-            loader = st.session_state.data_loader
-            vayu = st.session_state.get("vayu_result")
-            if not vayu:
-                try:
-                    vayu = loader.calculate_vayu_tier(
-                        st.session_state.get("selected_use_cases", []),
-                        st.session_state.answers,
-                    )
-                except Exception:
-                    vayu = {"label": "—"}
+        vayu = st.session_state.vayu_result
+        if not vayu:
             try:
-                relevant_risks = loader.calculate_relevant_risks(
-                    st.session_state.answers,
-                    st.session_state.selected_personas,
+                vayu = loader.calculate_vayu_tier(
+                    st.session_state.selected_use_cases, st.session_state.answers
                 )
             except Exception:
-                relevant_risks = []
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Questions Answered", len(st.session_state.answers))
-            with col2:
-                st.metric("Risk Tier", vayu.get("label", "—").upper())
-            with col3:
-                st.metric("Risks Identified", len(relevant_risks))
+                vayu = {"label": "—"}
+        try:
+            risks = loader.calculate_relevant_risks(
+                st.session_state.answers, st.session_state.selected_personas
+            )
+        except Exception:
+            risks = []
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Questions Answered", len(st.session_state.answers))
+        c2.metric("Risk Tier", vayu.get("label", "—").upper())
+        c3.metric("Risks Found", len(risks))
+
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("Continue Assessment", use_container_width=True):
+                st.session_state.current_page = "Assessment"
+                st.rerun()
 
 elif page == "Assessment":
     try:
         from app.pages.assessment import render_assessment
         render_assessment()
     except Exception as e:
-        st.error(f"❌ Error loading assessment page: {str(e)}")
+        st.error(f"Error loading assessment: {e}")
         st.exception(e)
 
-elif page == "Control Mapping":
+elif page == "Results":
     try:
-        from app.pages.control_mapping import render_control_mapping
-        render_control_mapping()
+        from app.pages.results import render_results
+        render_results()
     except Exception as e:
-        st.error(f"❌ Error loading control mapping page: {str(e)}")
-        st.exception(e)
-
-elif page == "Risk Analysis":
-    try:
-        from app.pages.risk_analysis import render_risk_analysis
-        render_risk_analysis()
-    except Exception as e:
-        st.error(f"❌ Error loading risk analysis page: {str(e)}")
+        st.error(f"Error loading results: {e}")
         st.exception(e)
