@@ -1,0 +1,1364 @@
+schemaVersion: "1.5"
+purpose: "Use case intake form. Most fields can be prefilled from inventory and only require confirm or edit."
+
+relevanceLabels:
+  - "modelCreator"
+  - "modelUsage"
+  - "both"
+  - "neither"
+
+prefillSources:
+  - inventory
+  - staffDirectory
+  - bankOrgList
+  - approvedModelCatalog
+  - approvedEmbeddingModelCatalog
+  - approvedCloudRegions
+  - systemCatalog
+
+ruleEvaluation:
+  order: "topToBottom"
+  conflictResolution:
+    stepVisibility: "hideWins"
+    requiredness: "requiredWins"
+    flags: "lastWins"
+
+flags:
+  defaults:
+    needsRetrievalStep: false
+    needsDataSourcesStep: false
+    creatorTrainingStepEnabled: false
+    runtimeSpeechMode: false
+    runtimeVisionMode: false
+    llmMode: false
+    traditionalMlMode: false
+
+    hasExternalExposure: false
+    hasAgenticAction: false
+    hasCustomAppCode: false
+
+theEightFunctionTaxonomy:
+  - id: "E8UC1"
+    label: "Customer eligibility or credit decisions"
+    decisionImpact: "Explicitly approve, deny, price, set limits, or restructure customer outcomes"
+    exampleUseCase:
+      - "Pre approval"
+      - "Underwriting"
+      - "Credit scoring"
+
+  - id: "E8UC2"
+    label: "Financial crime prevention"
+    decisionImpact: "Block, flag, or rank enforcement actions"
+    exampleUseCase:
+      - "Fraud detection"
+      - "AML detection"
+
+  - id: "E8UC3"
+    label: "Financial and risk management decision"
+    decisionImpact: "Influence financial statements, bank capital, or risk exposure"
+    exampleUseCase:
+      - "Capital planning"
+      - "TFRS 9 impairment and ECL support"
+      - "PD, LGD, EAD support"
+
+  - id: "E8UC4"
+    label: "Customer influence and recommendations"
+    decisionImpact: "Implicitly influence approval, denial, or customer outcomes through suggestions"
+    exampleUseCase:
+      - "You may also like"
+      - "Customer retention recommendations"
+
+  - id: "E8UC5"
+    label: "Customer communication and service"
+    decisionImpact: "Take actions on the bank’s behalf in customer interactions"
+    exampleUseCase:
+      - "Complaint management"
+      - "Customer chatbot"
+
+  - id: "E8UC6"
+    label: "Internal copilot or service with sensitive data"
+    decisionImpact: "Assist staff using confidential or regulated data"
+    exampleUseCase:
+      - "RM assistant"
+      - "Credit write up drafting"
+      - "Financial statement translation"
+      - "Financial statement mapping"
+      - "Contact center assistance"
+
+  - id: "E8UC7"
+    label: "Low risk internal productivity"
+    decisionImpact: "Assist staff on general productivity tasks with limited decision impact"
+    exampleUseCase:
+      - "Microsoft Copilot usage"
+      - "Cursor assisted coding"
+      - "Back office support copilot"
+
+  - id: "E8UC8"
+    label: "AI systems that influence other AI"
+    decisionImpact: "Shape, govern, or change downstream AI behavior in production"
+    exampleUseCase:
+      - "AI governance tools"
+      - "OCR fine tuning system"
+
+rules:
+  - id: "r1_computeRetrievalNeed"
+    description: "Compute Retrieval need"
+    setFlags:
+      needsRetrievalStep: true
+    when:
+      any:
+        - field: "usesRetrievalRag"
+          equals: "Yes"
+        - field: "usesRetrievalRag"
+          equals: "Unknown"
+        - field: "outputGenerationMode"
+          equals: "Retrieval only"
+        - field: "outputGenerationMode"
+          equals: "Retrieval plus generation"
+
+  - id: "r2_computeDataSourcesNeed"
+    description: "Compute Data sources need"
+    setFlags:
+      needsDataSourcesStep: true
+    when:
+      any:
+        - field: "usesNonPublicDataOrStoresUserInput"
+          equals: "Yes"
+        - field: "usesNonPublicDataOrStoresUserInput"
+          equals: "Unknown"
+        - field: "modelCreator"
+          equals: "Fine tune LLM"
+        - field: "modelCreator"
+          equals: "Train LLM from scratch"
+        - field: "modelCreator"
+          equals: "Train traditional ML model"
+
+  - id: "r3_computeCreatorTrainingStepEnabled"
+    description: "Creator training step enabled when training or fine tuning"
+    setFlags:
+      creatorTrainingStepEnabled: true
+    when:
+      any:
+        - field: "modelCreator"
+          equals: "Fine tune LLM"
+        - field: "modelCreator"
+          equals: "Train LLM from scratch"
+        - field: "modelCreator"
+          equals: "Train traditional ML model"
+
+  - id: "r4_computeRuntimeSpeechMode"
+    description: "Speech runtime path"
+    setFlags:
+      runtimeSpeechMode: true
+    when:
+      any:
+        - field: "primaryRuntimeModelTypes"
+          includes: "ASR speech to text"
+        - field: "primaryRuntimeModelTypes"
+          includes: "TTS text to speech"
+
+  - id: "r5_computeRuntimeVisionMode"
+    description: "Vision runtime path"
+    setFlags:
+      runtimeVisionMode: true
+    when:
+      any:
+        - field: "primaryRuntimeModelTypes"
+          includes: "Vision language model (VLM)"
+        - field: "primaryRuntimeModelTypes"
+          includes: "Multimodal LMM (text + image or audio)"
+        - field: "primaryRuntimeModelTypes"
+          includes: "Computer vision (non generative)"
+        - field: "primaryRuntimeModelTypes"
+          includes: "OCR or document understanding"
+
+  - id: "r6_computeLlmMode"
+    description: "LLM mode is driven by runtime model types, not creator choice"
+    setFlags:
+      llmMode: true
+      traditionalMlMode: false
+    when:
+      any:
+        - field: "primaryRuntimeModelTypes"
+          includes: "LLM text"
+        - field: "primaryRuntimeModelTypes"
+          includes: "Multimodal LMM (text + image or audio)"
+        - field: "primaryRuntimeModelTypes"
+          includes: "Vision language model (VLM)"
+
+  - id: "r7_computeTraditionalMlMode"
+    description: "Traditional ML mode"
+    setFlags:
+      llmMode: false
+      traditionalMlMode: true
+    when:
+      any:
+        - field: "primaryRuntimeModelTypes"
+          includes: "Traditional ML tabular"
+        - field: "primaryRuntimeModelTypes"
+          includes: "Time series forecasting"
+        - field: "primaryRuntimeModelTypes"
+          includes: "Recommender or ranking"
+        - field: "primaryRuntimeModelTypes"
+          includes: "Anomaly detection"
+
+  - id: "r8_step6RequiredForTraining"
+    description: "Data sources step required for training or fine tuning"
+    stepState:
+      stepId: "step6"
+      required: true
+      collapsedByDefault: false
+    when:
+      any:
+        - field: "modelCreator"
+          equals: "Fine tune LLM"
+        - field: "modelCreator"
+          equals: "Train LLM from scratch"
+        - field: "modelCreator"
+          equals: "Train traditional ML model"
+
+  - id: "r9_step6OptionalWhenNoSensitiveRuntimeData"
+    description: "Data sources optional when no non public runtime data and not training"
+    stepState:
+      stepId: "step6"
+      required: false
+      collapsedByDefault: true
+    when:
+      all:
+        - field: "usesNonPublicDataOrStoresUserInput"
+          equals: "No"
+        - field: "modelCreator"
+          equals: "No model creation, use existing model"
+
+  - id: "r10_computeExternalExposureFlag"
+    description: "External exposure flag for abuse and query risk routing"
+    setFlags:
+      hasExternalExposure: true
+    when:
+      any:
+        - field: "accessSurface"
+          equals: "External authenticated"
+        - field: "accessSurface"
+          equals: "External public"
+        - field: "accessSurface"
+          equals: "Partner or third party access"
+
+  - id: "r11_computeAgenticActionFlag"
+    description: "Agentic action flag for agent and tool risk routing"
+    setFlags:
+      hasAgenticAction: true
+    when:
+      any:
+        - field: "toolActionability"
+          equals: "Write internal state"
+        - field: "toolActionability"
+          equals: "Write external systems"
+        - field: "toolActionability"
+          equals: "Unknown"
+
+  - id: "r12_computeCustomAppCodeFlag"
+    description: "Custom app code flag for secure coding and dependency routing"
+    setFlags:
+      hasCustomAppCode: true
+    when:
+      any:
+        - field: "applicationImplementationOwnership"
+          equals: "Bank built and operated"
+        - field: "applicationImplementationOwnership"
+          equals: "Hybrid bank plus vendor"
+
+steps:
+  - id: "step1"
+    title: "AI Project Information"
+    fields:
+      - key: "useCaseId"
+        label: "Use case ID"
+        type: "autoId"
+        relevance: "neither"
+        constraints:
+          immutable: true
+          autoGenerated: true
+
+      - key: "useCaseName"
+        label: "Use case name"
+        type: "textShort"
+        relevance: "neither"
+
+      - key: "businessUnit"
+        label: "Business unit"
+        type: "selectOne"
+        relevance: "neither"
+        optionsSource:
+          type: "bankOrgList"
+          includeOther: true
+
+      - key: "productOrProcessName"
+        label: "Product or process name"
+        type: "textShort"
+        relevance: "neither"
+
+      - key: "businessOwner"
+        label: "Business owner"
+        type: "selectOne"
+        relevance: "neither"
+        optionsSource:
+          type: "staffDirectory"
+          includeOther: true
+
+      - key: "systemOwner"
+        label: "System owner"
+        type: "selectOne"
+        relevance: "neither"
+        optionsSource:
+          type: "staffDirectory"
+          includeOther: true
+
+      - key: "linkedArtifacts"
+        label: "Linked artifacts"
+        type: "textMultiline"
+        relevance: "neither"
+        guidance: "Include Jira epic, repo, API name, runbook, Confluence page"
+
+      - key: "modelCreator"
+        label: "Model creator"
+        type: "selectOne"
+        relevance: "neither"
+        options:
+          - "No model creation, use existing model"
+          - "Train traditional ML model"
+          - "Fine tune LLM"
+          - "Train LLM from scratch"
+          - "Other"
+        otherDetailField: "modelCreatorOtherDetail"
+        guidance: "Routing for training step and training data requirements"
+
+      - key: "modelCreatorOtherDetail"
+        label: "Other detail"
+        type: "textShort"
+        relevance: "neither"
+        visibleWhen:
+          any:
+            - field: "modelCreator"
+              equals: "Other"
+
+      - key: "modelUsage"
+        label: "Model usage"
+        type: "selectOne"
+        relevance: "neither"
+        options:
+          - "Third party API"
+          - "Bank hosted endpoint"
+          - "On device or embedded"
+          - "Batch pipeline"
+          - "Other"
+        otherDetailField: "modelUsageOtherDetail"
+        guidance: "Routing for hosting and runtime questions"
+
+      - key: "modelUsageOtherDetail"
+        label: "Other detail"
+        type: "textShort"
+        relevance: "neither"
+        visibleWhen:
+          any:
+            - field: "modelUsage"
+              equals: "Other"
+
+      - key: "applicationImplementationOwnership"
+        label: "Application implementation ownership"
+        type: "selectOne"
+        relevance: "neither"
+        options:
+          - "Bank built and operated"
+          - "Vendor SaaS or managed application"
+          - "Hybrid bank plus vendor"
+          - "Unknown"
+        guidance: "Used to route secure coding and dependency questions"
+
+      - key: "usesRetrievalRag"
+        label: "Uses retrieval, RAG"
+        type: "selectOne"
+        relevance: "neither"
+        options:
+          - "Yes"
+          - "No"
+          - "Unknown"
+
+      - key: "usesToolsOrIntegrations"
+        label: "Uses tools or system integrations"
+        type: "selectOne"
+        relevance: "neither"
+        options:
+          - "Yes"
+          - "No"
+          - "Unknown"
+
+      - key: "toolActionability"
+        label: "Tool actionability"
+        type: "selectOne"
+        relevance: "neither"
+        options:
+          - "No tools"
+          - "Read only"
+          - "Write internal state"
+          - "Write external systems"
+          - "Unknown"
+        guidance: "Used to route agent and action risk questions"
+        visibleWhen:
+          any:
+            - field: "usesToolsOrIntegrations"
+              equals: "Yes"
+            - field: "usesToolsOrIntegrations"
+              equals: "Unknown"
+
+      - key: "usesNonPublicDataOrStoresUserInput"
+        label: "Uses any non public data at runtime or stores any user input"
+        type: "selectOne"
+        relevance: "neither"
+        options:
+          - "Yes"
+          - "No"
+          - "Unknown"
+
+      - key: "outputPersistenceRouting"
+        label: "Output persistence routing"
+        type: "selectOne"
+        relevance: "neither"
+        options:
+          - "Ephemeral on screen only"
+          - "Stored in application logs"
+          - "Stored in customer record or case system"
+          - "Stored in knowledge base"
+          - "Other"
+        otherDetailField: "outputPersistenceRoutingOtherDetail"
+        guidance: "Routes which storage fields must appear later"
+
+      - key: "outputPersistenceRoutingOtherDetail"
+        label: "Other detail"
+        type: "textShort"
+        relevance: "neither"
+        visibleWhen:
+          any:
+            - field: "outputPersistenceRouting"
+              equals: "Other"
+
+      - key: "primaryRuntimeModelTypes"
+        label: "Primary runtime model types used in production"
+        type: "selectMany"
+        relevance: "neither"
+        guidance: "Routing for modality specific runtime questions"
+        options:
+          - "LLM text"
+          - "Multimodal LMM (text + image or audio)"
+          - "Vision language model (VLM)"
+          - "ASR speech to text"
+          - "TTS text to speech"
+          - "Embedding model"
+          - "Computer vision (non generative)"
+          - "OCR or document understanding"
+          - "Traditional ML tabular"
+          - "Time series forecasting"
+          - "Recommender or ranking"
+          - "Anomaly detection"
+          - "Other"
+        otherDetailField: "primaryRuntimeModelTypesOtherDetail"
+
+      - key: "primaryRuntimeModelTypesOtherDetail"
+        label: "Other detail"
+        type: "textShort"
+        relevance: "neither"
+        visibleWhen:
+          any:
+            - field: "primaryRuntimeModelTypes"
+              includes: "Other"
+
+  - id: "step2"
+    title: "Use Case Profile"
+    sections:
+      - id: "sec2a"
+        title: "Intended use and user journey"
+        fields:
+          - key: "audienceScope"
+            label: "Audience scope"
+            type: "selectOne"
+            relevance: "neither"
+            options:
+              - "Internal only"
+              - "External only"
+              - "Internal and external"
+
+          - key: "domain"
+            label: "Domain"
+            type: "selectOne"
+            relevance: "neither"
+            options:
+              - "Customer facing"
+              - "Employee facing"
+              - "Back office operations"
+              - "Platform capability"
+              - "Other"
+            otherDetailField: "domainOtherDetail"
+
+          - key: "domainOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "neither"
+            visibleWhen:
+              any:
+                - field: "domain"
+                  equals: "Other"
+
+          - key: "usecaseCategory"
+            label: "Use Case Category (The Eight)"
+            type: "selectOne"
+            relevance: "neither"
+            optionsSource:
+              type: "theEightFunctionTaxonomy"
+              includeOther: true
+            otherDetailField: "functionTheEightOtherDetail"
+            guidance: "Uses your bank taxonomy via optionsSource"
+
+          - key: "functionTheEightOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "neither"
+            visibleWhen:
+              any:
+                - field: "usecaseCategory"
+                  equals: "Other"
+
+          - key: "interactionChannel"
+            label: "Interaction channel"
+            type: "selectMany"
+            relevance: "neither"
+            options:
+              - "Chat interface"
+              - "Call center assist"
+              - "Email or message drafting"
+              - "Document analysis"
+              - "Internal dashboard"
+              - "API integration"
+              - "Other"
+            otherDetailField: "interactionChannelOtherDetail"
+
+          - key: "interactionChannelOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "neither"
+            visibleWhen:
+              any:
+                - field: "interactionChannel"
+                  includes: "Other"
+
+          - key: "triggerEvent"
+            label: "Trigger event"
+            type: "selectOne"
+            relevance: "neither"
+            options:
+              - "Customer initiated"
+              - "Employee initiated"
+              - "System initiated"
+              - "Scheduled batch"
+              - "Other"
+            otherDetailField: "triggerEventOtherDetail"
+
+          - key: "triggerEventOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "neither"
+            visibleWhen:
+              any:
+                - field: "triggerEvent"
+                  equals: "Other"
+
+      - id: "sec2b"
+        title: "Capability profile"
+        fields:
+          - key: "aiCapabilityType"
+            label: "AI capability type"
+            type: "selectMany"
+            relevance: "neither"
+            options:
+              - "Retrieval"
+              - "Generation"
+              - "Prediction"
+              - "Classification"
+              - "Extraction"
+              - "Recommendation"
+              - "Embedding search"
+              - "Multi step tool use"
+              - "Other"
+            otherDetailField: "aiCapabilityTypeOtherDetail"
+
+          - key: "aiCapabilityTypeOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "neither"
+            visibleWhen:
+              any:
+                - field: "aiCapabilityType"
+                  includes: "Other"
+
+      - id: "sec2c"
+        title: "Input"
+        fields:
+          - key: "inputModalities"
+            label: "Input modalities"
+            type: "selectMany"
+            relevance: "neither"
+            options:
+              - "Text"
+              - "Structured records"
+              - "Files like PDF or DOCX"
+              - "Images"
+              - "Audio"
+              - "No external input, system generated"
+              - "Other"
+            otherDetailField: "inputModalitiesOtherDetail"
+            constraints:
+              mutuallyExclusiveGroups:
+                - name: "noExternalInputGroup"
+                  options:
+                    - "No external input, system generated"
+                  exclusiveWith:
+                    - "Text"
+                    - "Structured records"
+                    - "Files like PDF or DOCX"
+                    - "Images"
+                    - "Audio"
+                    - "Other"
+
+          - key: "inputModalitiesOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "neither"
+            visibleWhen:
+              any:
+                - field: "inputModalities"
+                  includes: "Other"
+
+          - key: "inputSource"
+            label: "Input source"
+            type: "selectOne"
+            relevance: "neither"
+            options:
+              - "User typed"
+              - "Upstream system"
+              - "Scheduled batch"
+              - "Mixed"
+              - "Other"
+            otherDetailField: "inputSourceOtherDetail"
+
+          - key: "inputSourceOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "neither"
+            visibleWhen:
+              any:
+                - field: "inputSource"
+                  equals: "Other"
+
+      - id: "sec2d"
+        title: "Output"
+        fields:
+          - key: "outputModality"
+            label: "Output modality"
+            type: "selectMany"
+            relevance: "neither"
+            guidance: "A project may output multiple types"
+            options:
+              - "Text"
+              - "Structured data like JSON fields"
+              - "Code"
+              - "Embeddings"
+              - "Image"
+              - "Audio"
+              - "Video"
+              - "Other"
+            otherDetailField: "outputModalityOtherDetail"
+
+          - key: "outputModalityOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "neither"
+            visibleWhen:
+              any:
+                - field: "outputModality"
+                  includes: "Other"
+
+          - key: "outputGenerationMode"
+            label: "Output generation mode"
+            type: "selectOne"
+            relevance: "neither"
+            options:
+              - "Retrieval only"
+              - "Retrieval plus generation"
+              - "Generation only"
+
+          - key: "decisionAutomationLevel"
+            label: "Decision automation level"
+            type: "selectOne"
+            relevance: "neither"
+            options:
+              - "Inform only"
+              - "Recommend with human decision"
+              - "Auto execute or auto apply"
+              - "Unknown"
+            guidance: "Used to interpret impact and escalation requirements"
+
+          - key: "humanReviewPoint"
+            label: "Human review point"
+            type: "selectOne"
+            relevance: "neither"
+            options:
+              - "Pre output review"
+              - "Pre action review"
+              - "Post action review"
+              - "No human review"
+              - "Unknown"
+
+          - key: "citationRequirement"
+            label: "Citation requirement"
+            type: "selectOne"
+            relevance: "neither"
+            options:
+              - "Always cite sources"
+              - "Must cite for factual claims"
+              - "Cite when available"
+              - "No citations"
+
+          - key: "outputPersistence"
+            label: "Output persistence"
+            type: "selectOne"
+            relevance: "neither"
+            options:
+              - "Ephemeral on screen only"
+              - "Stored in application logs"
+              - "Stored in customer record or case system"
+              - "Stored in knowledge base"
+              - "Other"
+            otherDetailField: "outputPersistenceOtherDetail"
+            guidance: "Keep consistent with outputPersistenceRouting"
+
+          - key: "outputPersistenceOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "neither"
+            visibleWhen:
+              any:
+                - field: "outputPersistence"
+                  equals: "Other"
+
+      - id: "sec2e"
+        title: "Exposure"
+        fields:
+          - key: "accessSurface"
+            label: "Access surface"
+            type: "selectOne"
+            relevance: "neither"
+            options:
+              - "Internal authenticated"
+              - "Partner or third party access"
+              - "External authenticated"
+              - "External public"
+              - "Unknown"
+            guidance: "Used to route abuse and large scale query questions"
+
+          - key: "apiExposure"
+            label: "API exposure"
+            type: "selectOne"
+            relevance: "neither"
+            options:
+              - "No API"
+              - "Internal API only"
+              - "External API behind authentication"
+              - "Public API"
+              - "Unknown"
+
+          - key: "authenticationMechanism"
+            label: "Authentication mechanism"
+            type: "selectOne"
+            relevance: "neither"
+            options:
+              - "SSO"
+              - "OAuth or OIDC"
+              - "API key"
+              - "Mutual TLS"
+              - "No authentication"
+              - "Unknown"
+
+          - key: "expectedPeakTraffic"
+            label: "Expected peak traffic"
+            type: "selectOne"
+            relevance: "neither"
+            options:
+              - "Low"
+              - "Medium"
+              - "High"
+              - "Unknown"
+            guidance: "Directional only, used to scale abuse control expectations"
+
+  - id: "step3"
+    title: "People and operating model"
+    sections:
+      - id: "sec3a"
+        title: "Who uses the output and who is affected"
+        fields:
+          - key: "outputConsumers"
+            label: "Output consumers"
+            type: "selectMany"
+            relevance: "neither"
+            options:
+              - "Employee"
+              - "Customer"
+              - "External partner"
+              - "Public"
+              - "Other"
+            otherDetailField: "outputConsumersOtherDetail"
+
+          - key: "outputConsumersOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "neither"
+            visibleWhen:
+              any:
+                - field: "outputConsumers"
+                  includes: "Other"
+
+          - key: "affectedParty"
+            label: "Affected party"
+            type: "selectOne"
+            relevance: "neither"
+            options:
+              - "Employees only"
+              - "Customers only"
+              - "Employees and customers"
+              - "External parties"
+              - "Public"
+              - "Unknown"
+
+          - key: "escalationPathAvailable"
+            label: "Escalation path available"
+            type: "selectOne"
+            relevance: "neither"
+            options:
+              - "Always available"
+              - "Available in some cases"
+              - "Not available"
+              - "Unknown"
+
+      - id: "sec3b"
+        title: "Operating language"
+        fields:
+          - key: "supportedLanguages"
+            label: "Supported languages"
+            type: "selectMany"
+            relevance: "modelUsage"
+            options:
+              - "Thai"
+              - "English"
+              - "Thai and English mixed"
+              - "Chinese"
+              - "Japanese"
+              - "Korean"
+              - "Indonesian"
+              - "Malay"
+              - "Filipino"
+              - "Vietnamese"
+              - "Lao"
+              - "Khmer"
+              - "Burmese"
+              - "Other"
+            otherDetailField: "supportedLanguagesOtherDetail"
+
+          - key: "supportedLanguagesOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "modelUsage"
+            visibleWhen:
+              any:
+                - field: "supportedLanguages"
+                  includes: "Other"
+
+  - id: "step4"
+    title: "Model, hosting, and runtime mapping"
+    guidance: "Repeat one block per model used by this AI system"
+    repeatingBlocks:
+      - id: "block4Models"
+        title: "Model entry"
+        minItems: 1
+        fields:
+          - key: "modelName"
+            label: "Model name"
+            type: "textShort"
+            relevance: "modelUsage"
+            guidance: "Human readable identifier, e.g., gemini-3-flash"
+
+          - key: "modelKind"
+            label: "Model kind"
+            type: "selectOne"
+            relevance: "both"
+            options:
+              - "LLM text"
+              - "Multimodal LMM (text + image or audio)"
+              - "Vision language model (VLM)"
+              - "ASR speech to text"
+              - "TTS text to speech"
+              - "Embedding model"
+              - "Computer vision (non generative)"
+              - "OCR or document understanding"
+              - "Traditional ML tabular"
+              - "Time series forecasting"
+              - "Recommender or ranking"
+              - "Anomaly detection"
+              - "Other"
+            otherDetailField: "modelKindOtherDetail"
+
+          - key: "modelKindOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "both"
+            visibleWhen:
+              any:
+                - field: "modelKind"
+                  equals: "Other"
+
+          - key: "modelType"
+            label: "Model type"
+            type: "selectOne"
+            relevance: "modelUsage"
+            options:
+              - "Closed model via API"
+              - "Open weights self hosted"
+              - "Open source self hosted"
+              - "Custom trained model"
+
+          - key: "modelFamilyOrCatalogName"
+            label: "Model family or catalog name"
+            type: "selectOne"
+            relevance: "modelUsage"
+            optionsSource:
+              type: "approvedModelCatalog"
+              includeOther: true
+            otherDetailField: "modelFamilyOtherDetail"
+
+          - key: "modelFamilyOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "modelUsage"
+            visibleWhen:
+              any:
+                - field: "modelFamilyOrCatalogName"
+                  equals: "Other"
+
+          - key: "modelProvider"
+            label: "Model provider"
+            type: "selectOne"
+            relevance: "modelUsage"
+            options:
+              - "Google"
+              - "OpenAI"
+              - "Microsoft Azure OpenAI"
+              - "Anthropic"
+              - "AWS"
+              - "Internal model"
+              - "Other"
+            otherDetailField: "modelProviderOtherDetail"
+
+          - key: "modelProviderOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "modelUsage"
+            visibleWhen:
+              any:
+                - field: "modelProvider"
+                  equals: "Other"
+
+          - key: "hostingResponsibility"
+            label: "Hosting responsibility"
+            type: "selectOne"
+            relevance: "modelUsage"
+            options:
+              - "Bank managed"
+              - "Vendor managed"
+              - "Shared"
+
+          - key: "hostingEnvironment"
+            label: "Hosting environment"
+            type: "selectOne"
+            relevance: "modelUsage"
+            options:
+              - "On premise"
+              - "Cloud"
+              - "Hybrid"
+
+          - key: "cloudRegion"
+            label: "Cloud region"
+            type: "selectMany"
+            relevance: "modelUsage"
+            optionsSource:
+              type: "approvedCloudRegions"
+              includeUnknown: true
+            visibleWhen:
+              any:
+                - field: "hostingEnvironment"
+                  equals: "Cloud"
+                - field: "hostingEnvironment"
+                  equals: "Hybrid"
+
+          - key: "dataSentToModelProvider"
+            label: "Data sent to model provider or external service"
+            type: "selectMany"
+            relevance: "modelUsage"
+            options:
+              - "Prompts or user messages"
+              - "Retrieved context snippets"
+              - "User files"
+              - "System prompts"
+              - "Model outputs"
+              - "No external transmission"
+              - "Unknown"
+            constraints:
+              mutuallyExclusiveGroups:
+                - name: "noExternalTransmissionGroup"
+                  options:
+                    - "No external transmission"
+                  exclusiveWith:
+                    - "Prompts or user messages"
+                    - "Retrieved context snippets"
+                    - "User files"
+                    - "System prompts"
+                    - "Model outputs"
+                    - "Unknown"
+
+          - key: "externalProviderRetention"
+            label: "External provider retention or logging"
+            type: "selectOne"
+            relevance: "modelUsage"
+            options:
+              - "No retention"
+              - "Retention for abuse monitoring only"
+              - "Retention for service improvement"
+              - "Unknown"
+
+          - key: "externalProviderTrainingUse"
+            label: "External provider may use data for training"
+            type: "selectOne"
+            relevance: "modelUsage"
+            options:
+              - "No"
+              - "Yes"
+              - "Unknown"
+
+          - key: "peftAdapterStrategy"
+            label: "PEFT adapter strategy"
+            type: "selectMany"
+            relevance: "modelCreator"
+            options:
+              - "LORA"
+              - "qLORA"
+              - "Full fine tuning"
+              - "Other"
+            otherDetailField: "peftAdapterStrategyOtherDetail"
+            visibleWhen:
+              all:
+                - field: "modelCreator"
+                  equals: "Fine tune LLM"
+
+          - key: "peftAdapterStrategyOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "modelCreator"
+            visibleWhen:
+              any:
+                - field: "peftAdapterStrategy"
+                  includes: "Other"
+
+          - key: "toolOrSystemIntegrations"
+            label: "Tool or system integrations"
+            type: "selectMany"
+            relevance: "modelUsage"
+            options:
+              - "Bank internal APIs"
+              - "Customer profile systems"
+              - "CRM or ticketing"
+              - "Document repository"
+              - "Payments or transaction systems"
+              - "Third party tools"
+              - "None"
+              - "Other"
+            otherDetailField: "toolOrSystemIntegrationsOtherDetail"
+
+          - key: "toolOrSystemIntegrationsOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "modelUsage"
+            visibleWhen:
+              any:
+                - field: "toolOrSystemIntegrations"
+                  includes: "Other"
+
+          - key: "asrSupportedLanguages"
+            label: "ASR supported languages"
+            type: "selectMany"
+            relevance: "modelUsage"
+            options:
+              - "Thai"
+              - "English"
+              - "Thai and English mixed"
+              - "Other"
+            otherDetailField: "asrSupportedLanguagesOtherDetail"
+            visibleWhen:
+              any:
+                - field: "modelKind"
+                  equals: "ASR speech to text"
+
+          - key: "asrSupportedLanguagesOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "modelUsage"
+            visibleWhen:
+              any:
+                - field: "asrSupportedLanguages"
+                  includes: "Other"
+
+          - key: "ttsVoiceProfileId"
+            label: "TTS voice profile ID"
+            type: "textShort"
+            relevance: "modelUsage"
+            visibleWhen:
+              any:
+                - field: "modelKind"
+                  equals: "TTS text to speech"
+
+          - key: "embeddingVectorDimension"
+            label: "Embedding vector dimension"
+            type: "textShort"
+            relevance: "modelUsage"
+            visibleWhen:
+              any:
+                - field: "modelKind"
+                  equals: "Embedding model"
+
+          - key: "cvTaskType"
+            label: "Computer vision task type"
+            type: "selectOne"
+            relevance: "modelUsage"
+            options:
+              - "Classification"
+              - "Detection"
+              - "Segmentation"
+              - "Keypoint or pose"
+              - "Other"
+            otherDetailField: "cvTaskTypeOtherDetail"
+            visibleWhen:
+              any:
+                - field: "modelKind"
+                  equals: "Computer vision (non generative)"
+
+          - key: "cvTaskTypeOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "modelUsage"
+            visibleWhen:
+              any:
+                - field: "cvTaskType"
+                  equals: "Other"
+
+          - key: "ocrDocPrimaryFormats"
+            label: "OCR or document primary formats"
+            type: "selectMany"
+            relevance: "modelUsage"
+            options:
+              - "Scanned PDF"
+              - "Digital PDF"
+              - "Images"
+              - "Office documents"
+              - "Other"
+            otherDetailField: "ocrDocPrimaryFormatsOtherDetail"
+            visibleWhen:
+              any:
+                - field: "modelKind"
+                  equals: "OCR or document understanding"
+
+          - key: "ocrDocPrimaryFormatsOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "modelUsage"
+            visibleWhen:
+              any:
+                - field: "ocrDocPrimaryFormats"
+                  includes: "Other"
+
+  - id: "step5"
+    title: "Retrieval and knowledge configuration"
+    visibilityLogic:
+      shownWhen:
+        any:
+          - flag: "needsRetrievalStep"
+            equals: true
+    sections:
+      - id: "sec5a"
+        title: "Retrieval configuration"
+        fields:
+          - key: "retrievalSourceType"
+            label: "Retrieval source type"
+            type: "selectOne"
+            relevance: "modelUsage"
+            options:
+              - "Document store"
+              - "Vector store"
+              - "Graph store"
+              - "Feature store"
+              - "Search engine"
+              - "Hybrid"
+              - "Other"
+            otherDetailField: "retrievalOtherDetail"
+
+          - key: "embeddingModelName"
+            label: "Embedding model name"
+            type: "selectOne"
+            relevance: "modelUsage"
+            optionsSource:
+              type: "approvedEmbeddingModelCatalog"
+              includeOther: true
+            otherDetailField: "retrievalOtherDetail"
+
+          - key: "refreshMethod"
+            label: "Refresh method"
+            type: "selectOne"
+            relevance: "modelUsage"
+            options:
+              - "Batch schedule"
+              - "Event driven"
+              - "Manual"
+              - "Unknown"
+
+          - key: "retrievalOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "modelUsage"
+            visibleWhen:
+              any:
+                - field: "retrievalSourceType"
+                  equals: "Other"
+                - field: "embeddingModelName"
+                  equals: "Other"
+
+  - id: "step6"
+    title: "Data sources and classification"
+    visibilityLogic:
+      shownWhen:
+        any:
+          - flag: "needsDataSourcesStep"
+            equals: true
+      optionalWhen:
+        any:
+          - field: "usesNonPublicDataOrStoresUserInput"
+            equals: "No"
+    repeatingBlocks:
+      - id: "block6DataSources"
+        title: "Data sources and data classification"
+        guidance: "Add one row per data source category"
+        minItems: 0
+        fields:
+          - key: "dataUsagePhase"
+            label: "Data usage phase"
+            type: "selectMany"
+            relevance: "both"
+            options:
+              - "Training"
+              - "Tuning"
+              - "Evaluation"
+              - "Inference runtime"
+              - "Retrieval index"
+              - "Application logs or telemetry"
+              - "Other"
+            otherDetailField: "dataOtherDetail"
+            guidance: "Critical to gate training questions vs runtime questions"
+
+          - key: "dataSourceCategory"
+            label: "Data source category"
+            type: "selectOne"
+            relevance: "both"
+            options:
+              - "Bank internal unstructured documents"
+              - "Bank internal structured data"
+              - "Customer provided input at runtime"
+              - "Customer historical interaction logs"
+              - "Third party data"
+              - "Public data"
+              - "Model provider logs or telemetry"
+              - "Other"
+            otherDetailField: "dataOtherDetail"
+
+          - key: "dataFormat"
+            label: "Data format"
+            type: "selectOne"
+            relevance: "both"
+            options:
+              - "Unstructured text"
+              - "PDF"
+              - "Office documents"
+              - "Images"
+              - "Audio"
+              - "Tabular"
+              - "Event logs"
+              - "Other"
+            otherDetailField: "dataOtherDetail"
+
+          - key: "dataGranularity"
+            label: "Data granularity"
+            type: "selectOne"
+            relevance: "both"
+            options:
+              - "Document level"
+              - "Field level"
+              - "Record level"
+              - "Conversation turn level"
+              - "Unknown"
+
+          - key: "dataSensitivityLevel"
+            label: "Data sensitivity level"
+            type: "selectOne"
+            relevance: "both"
+            options:
+              - "Public"
+              - "Internal"
+              - "Confidential"
+              - "Restricted or regulated"
+              - "Unknown"
+            guidance: "Bank aligned classification to drive risk routing"
+
+          - key: "containsSensitivePersonalData"
+            label: "Contains sensitive personal data"
+            type: "selectOne"
+            relevance: "both"
+            options:
+              - "Yes"
+              - "No"
+              - "Unknown"
+            guidance: "Used to gate sensitive data risks in training and runtime"
+
+          - key: "dataRetentionBand"
+            label: "Data retention band"
+            type: "selectOne"
+            relevance: "both"
+            options:
+              - "Ephemeral"
+              - "Up to 30 days"
+              - "31 to 180 days"
+              - "More than 180 days"
+              - "Unknown"
+
+          - key: "dataOtherDetail"
+            label: "Other detail"
+            type: "textShort"
+            relevance: "both"
+            visibleWhen:
+              any:
+                - field: "dataUsagePhase"
+                  includes: "Other"
+                - field: "dataSourceCategory"
+                  equals: "Other"
+                - field: "dataFormat"
+                  equals: "Other"

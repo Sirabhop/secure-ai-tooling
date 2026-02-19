@@ -31,22 +31,17 @@ def render_results():
         except Exception:
             vayu = {"label": "—", "tier": 0, "escalatedRules": []}
 
-    relevant_risks = st.session_state.get("relevant_risks")
-    if relevant_risks is None:
-        try:
-            relevant_risks = loader.calculate_relevant_risks(
-                st.session_state.answers,
-                st.session_state.get("selected_personas", []),
-            )
-            st.session_state.relevant_risks = relevant_risks
-        except Exception:
-            relevant_risks = []
+    try:
+        relevant_risks = loader.calculate_relevant_risks(
+            st.session_state.answers,
+            st.session_state.get("selected_personas", []),
+        )
+        st.session_state.relevant_risks = relevant_risks
+    except Exception:
+        relevant_risks = st.session_state.get("relevant_risks") or []
 
     controls = loader.get_controls_for_risks(relevant_risks) if relevant_risks else []
-    ctrl_ids = st.session_state.get("recommended_controls")
-    if ctrl_ids is None:
-        ctrl_ids = [c.get("id") for c in controls]
-        st.session_state.recommended_controls = ctrl_ids
+    st.session_state.recommended_controls = [c.get("id") for c in controls]
 
     # ── Tier overview ────────────────────────────────────────────────────────
     tier_label = vayu.get("label", "low")

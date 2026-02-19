@@ -134,6 +134,17 @@ def inject_custom_css():
     .chip.orange { background: #fff7ed; color: #c2410c; }
     .chip.purple { background: #faf5ff; color: #7e22ce; }
     .chip.red    { background: #fef2f2; color: #b91c1c; }
+
+    /* ---------- Inventory form ---------- */
+    .stSelectbox > div > div,
+    .stMultiSelect > div > div {
+        border-radius: 8px;
+    }
+    div[data-testid="stExpander"] {
+        border-radius: 10px;
+        border: 1px solid #e2e8f0;
+        margin-bottom: 0.5rem;
+    }
     </style>
     """, unsafe_allow_html=True)
 

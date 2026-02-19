@@ -10,7 +10,7 @@ from app.ui_utils import inject_custom_css
 
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="CoSAI Risk Map",
+    page_title="KTB Risk Navigator",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -34,6 +34,8 @@ _DEFAULTS = {
     "recommended_controls": [],
     "current_page": "Home",
     "assessment_step": 0,
+    "inventory_data": {},
+    "inventory_step": 0,
 }
 for key, default in _DEFAULTS.items():
     if key not in st.session_state:
@@ -54,7 +56,7 @@ if st.session_state.data_loader is None:
         st.stop()
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
-NAV = ["Home", "Assessment", "Results"]
+NAV = ["Home", "AI Inventory", "Assessment", "Results"]
 
 with st.sidebar:
     st.markdown("### 🛡️ CoSAI Risk Map")
@@ -151,6 +153,14 @@ if page == "Home":
             if st.button("Continue Assessment", use_container_width=True):
                 st.session_state.current_page = "Assessment"
                 st.rerun()
+
+elif page == "AI Inventory":
+    try:
+        from app.pages.ai_inventory import render_ai_inventory
+        render_ai_inventory()
+    except Exception as e:
+        st.error(f"Error loading AI Inventory: {e}")
+        st.exception(e)
 
 elif page == "Assessment":
     try:

@@ -31,6 +31,7 @@ class RiskMapDataLoader:
         self._controls: Optional[Dict[str, Any]] = None
         self._self_assessment: Optional[Dict[str, Any]] = None
         self._personas: Optional[Dict[str, Any]] = None
+        self._ai_inventory_schema: Optional[Dict[str, Any]] = None
         self._load_errors: Dict[str, str] = {}
         
     def load_yaml(self, filename: str) -> Dict[str, Any]:
@@ -121,6 +122,45 @@ class RiskMapDataLoader:
                 self._personas = {}
         return self._personas
     
+    def _merge_steps_by_id(self, steps: List[dict]) -> List[dict]:
+        """Merge steps with duplicate IDs into a single step (combines sections, fields, etc.)."""
+        by_id: Dict[str, dict] = {}
+        order: List[str] = []
+
+        for step in steps:
+            step_id = step.get("id", "")
+            if not step_id:
+                continue
+            if step_id not in by_id:
+                by_id[step_id] = dict(step)
+                by_id[step_id]["sections"] = list(step.get("sections", []))
+                by_id[step_id]["fields"] = list(step.get("fields", []))
+                blocks = step.get("repeatingBlocks", step.get("repeating_blocks", []))
+                by_id[step_id]["repeatingBlocks"] = list(blocks)
+                order.append(step_id)
+            else:
+                merged = by_id[step_id]
+                merged["sections"].extend(step.get("sections", []))
+                merged["fields"].extend(step.get("fields", []))
+                blocks = step.get("repeatingBlocks", step.get("repeating_blocks", []))
+                merged["repeatingBlocks"].extend(blocks)
+
+        return [by_id[sid] for sid in order]
+
+    @property
+    def ai_inventory_schema(self) -> Dict[str, Any]:
+        """Get AI inventory form schema, loading if necessary."""
+        if self._ai_inventory_schema is None:
+            try:
+                schema = self.load_yaml("ai-inventory.yaml")
+                steps = schema.get("steps", [])
+                if steps:
+                    schema = {**schema, "steps": self._merge_steps_by_id(steps)}
+                self._ai_inventory_schema = schema
+            except DataLoadError:
+                self._ai_inventory_schema = {}
+        return self._ai_inventory_schema
+
     def has_load_errors(self) -> bool:
         """Check if there were any errors during data loading."""
         return len(self._load_errors) > 0
@@ -175,6 +215,17 @@ class RiskMapDataLoader:
         q_by_driver = {q.get('driver'): q['id'] for q in questions_by_id.values() if q.get('driver')}
         q_by_control = {q.get('control'): q['id'] for q in questions_by_id.values() if q.get('control')}
 
+        def _answer_matches(ans: Any, in_answers: List[Any]) -> bool:
+            """Match answer to in_answers (handles YAML Yes/No -> True/False)."""
+            if ans is None:
+                return False
+            normalized = list(in_answers) if in_answers else []
+            if True in normalized and "Yes" not in normalized:
+                normalized.append("Yes")
+            if False in normalized and "No" not in normalized:
+                normalized.append("No")
+            return ans in normalized
+
         # 1. Use case baseline
         default_tier = baseline_cfg.get('defaultTier', 'low')
         baseline_value = tiers.get(default_tier, 1)
@@ -194,24 +245,12 @@ class RiskMapDataLoader:
             if q_id not in answers:
                 continue
             gate = q.get('baselineGate', {})
-            if_answer_in = set(gate.get('if_answer_in', []))
-            if answers.get(q_id) in if_answer_in:
+            if _answer_matches(answers.get(q_id), gate.get('if_answer_in', [])):
                 then_tier = gate.get('then_tier', 'low')
                 baseline_value = max(baseline_value, tiers.get(then_tier, 1))
 
         final_value = baseline_value
         escalated_rules = []
-
-        def _answer_matches(ans: Any, in_answers: List[Any]) -> bool:
-            """Match answer to in_answers (handles YAML Yes/No -> True/False)."""
-            if ans is None:
-                return False
-            normalized = list(in_answers) if in_answers else []
-            if True in normalized and "Yes" not in normalized:
-                normalized.append("Yes")
-            if False in normalized and "No" not in normalized:
-                normalized.append("No")
-            return ans in normalized
 
         # 3. Escalation rules
         for rule in escalation_rules:
