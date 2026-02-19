@@ -8,6 +8,28 @@ from app.ui_utils import render_chips, render_info_box, render_step_indicator
 STEP_LABELS = ["Setup", "Context", "Risk Questions", "Review"]
 
 
+def _format_answer_label(value):
+    """Render human-friendly labels for boolean YAML values."""
+    if value is True:
+        return "Yes"
+    if value is False:
+        return "No"
+    return str(value)
+
+
+def _extract_answer_labels(answer_defs: list[dict]) -> list:
+    """Extract labels while preserving boolean values like False ('No')."""
+    labels = []
+    for ans in answer_defs:
+        if "label" not in ans:
+            continue
+        label = ans["label"]
+        if label is None or label == "":
+            continue
+        labels.append(label)
+    return labels
+
+
 def _fmt_use_case(label: str) -> str:
     """camelCase → Title Case."""
     if not label:
@@ -41,7 +63,7 @@ def _question_widget(question: dict, loader, prefix: str, idx: int, total: int):
         st.caption(loader.format_text_list(text_items[1:]))
 
     answers_list = question.get("answers") or []
-    labels = [a["label"] for a in answers_list if a.get("label")]
+    labels = _extract_answer_labels(answers_list)
     if not labels:
         return
 
@@ -59,6 +81,7 @@ def _question_widget(question: dict, loader, prefix: str, idx: int, total: int):
         index=idx_sel,
         key=f"{prefix}_{q_id}",
         label_visibility="collapsed",
+        format_func=_format_answer_label,
     )
 
     if selected is not None:

@@ -685,6 +685,9 @@ def render_ai_inventory() -> None:
         s for s in steps
         if _is_step_visible(s, data, hidden_steps, repeat_blocks, flags=flags)
     ]
+    if not visible_steps:
+        st.error("No visible steps for the current answers. Please reset the form.")
+        return
     step_labels = [s.get("title", s.get("id", "")) for s in visible_steps]
 
     current_idx = st.session_state[_STEP_KEY]
