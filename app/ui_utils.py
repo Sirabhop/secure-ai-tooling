@@ -1,5 +1,5 @@
 """UI utilities and styling for Streamlit app."""
-from typing import Any, Dict, List
+from typing import List
 
 import streamlit as st
 
@@ -135,6 +135,31 @@ def inject_custom_css():
     .chip.purple { background: #faf5ff; color: #7e22ce; }
     .chip.red    { background: #fef2f2; color: #b91c1c; }
 
+    /* ---------- Prefilled sections ---------- */
+    .prefill-banner {
+        background: #f0fdf4;
+        border: 1px solid #bbf7d0;
+        border-left: 4px solid #22c55e;
+        border-radius: 8px;
+        padding: 0.75rem 1rem;
+        margin-bottom: 1rem;
+        font-size: 0.9rem;
+        color: #15803d;
+    }
+    .prefill-badge {
+        background: #f0fdf4;
+        border: 1px solid #bbf7d0;
+        border-radius: 6px;
+        padding: 0.4rem 0.75rem;
+        margin-bottom: 0.5rem;
+        font-size: 0.82rem;
+        color: #15803d;
+    }
+    .q-card.prefilled {
+        border-left: 4px solid #22c55e;
+        background: #f0fdf4;
+    }
+
     /* ---------- Inventory form ---------- */
     .stSelectbox > div > div,
     .stMultiSelect > div > div {
@@ -203,17 +228,6 @@ def render_chips(items: List[str], color: str = "blue"):
     st.markdown(html, unsafe_allow_html=True)
 
 
-# ---------------------------------------------------------------------------
-# Legacy helpers (kept for compatibility)
-# ---------------------------------------------------------------------------
-
-def render_progress_bar(current: int, total: int, label: str = "Progress"):
-    if total == 0:
-        return
-    st.progress(current / total)
-    st.caption(f"{label}: {current}/{total}")
-
-
 def render_info_box(message: str, type: str = "info"):
     icon_map = {"info": "ℹ️", "success": "✅", "warning": "⚠️", "error": "❌"}
     icon = icon_map.get(type, "ℹ️")
@@ -221,35 +235,16 @@ def render_info_box(message: str, type: str = "info"):
     fn(f"{icon} {message}")
 
 
-def render_badge(text: str, color: str = "blue"):
-    color_map = {"blue": "#1f77b4", "green": "#28a745", "orange": "#ffc107", "red": "#dc3545", "purple": "#6f42c1"}
-    color_hex = color_map.get(color, color_map["blue"])
-    st.markdown(
-        f'<span style="display:inline-block;padding:0.2rem 0.65rem;background:{color_hex};'
-        f'color:#fff;border-radius:12px;font-size:0.8rem;font-weight:600;margin:0.15rem;">{text}</span>',
-        unsafe_allow_html=True,
-    )
-
-
-def render_risk_card(risk: Dict[str, Any], loader, compact: bool = False):
-    title = risk.get("title", risk.get("id", "Unknown Risk"))
-    short_desc = loader.format_text_list(risk.get("shortDescription", []))
-    category = risk.get("category", "Unknown")
-    with st.container():
-        st.markdown(f"### {title}")
-        if short_desc and not compact:
-            st.caption(short_desc)
-        render_badge(category.replace("risks", "").strip(), "blue")
-        return title
-
-
-def render_control_card(control: Dict[str, Any], loader, compact: bool = False):
-    title = control.get("title", control.get("id", "Unknown Control"))
-    description = loader.format_text_list(control.get("description", []))
-    category = control.get("category", "Unknown")
-    with st.container():
-        st.markdown(f"### 🛡️ {title}")
-        if description and not compact:
-            st.caption(description[:150] + "..." if len(description) > 150 else description)
-        render_badge(category.replace("controls", "").strip(), "green")
-        return title
+def reset_assessment():
+    """Clear all assessment-related session state and rewind to step 0."""
+    _ASSESSMENT_KEYS = {
+        "answers": {},
+        "selected_personas": [],
+        "selected_use_cases": [],
+        "vayu_result": None,
+        "relevant_risks": [],
+        "recommended_controls": [],
+    }
+    for key, default in _ASSESSMENT_KEYS.items():
+        st.session_state[key] = default
+    st.session_state.assessment_step = 0

@@ -1,0 +1,799 @@
+schemaVersion: '1.2'
+purpose: Bridge AI inventory answers to assessment routing, question relevance, and
+  conditional requiredness
+inputs:
+  inventory:
+    ref: ai-inventory.yaml
+    schemaVersion: '1.5'
+  assessments:
+  - id: riskSelfAssessment
+    ref: self-assessment.yaml#/selfAssessment
+  - id: vayuAssessment
+    ref: self-assessment.yaml#/vayuAssessment
+  riskRegistry:
+    ref: risks.yaml#/risks
+selectorLanguage: blockAware
+facts:
+  defaults:
+    hasModelCreation: false
+    isGenerativeAi: false
+    usesRetrieval: false
+    usesSensitiveDataInTraining: Unknown
+    usesSensitiveDataInRuntime: Unknown
+    persistsOutputs: Unknown
+    hasExternalExposure: false
+    hasAgenticAction: false
+    hasCustomAppCode: false
+    usesExternalModelService: false
+    transmitsDataExternally: Unknown
+    externalProviderDataRetention: Unknown
+    externalProviderTrainingUse: Unknown
+    personaModelCreator: false
+    personaModelConsumer: false
+    requiresUserDataManagement: false
+    hasApiSurface: false
+factRules:
+- id: f1_personas_from_model_creator
+  description: Derive personas from modelCreator field
+  setFacts:
+    personaModelCreator: true
+  when:
+    any:
+    - field: modelCreator
+      equals: Train traditional ML model
+    - field: modelCreator
+      equals: Fine tune LLM
+    - field: modelCreator
+      equals: Train LLM from scratch
+- id: f2_persona_consumer_fallback
+  description: Model consumer when no model creation is declared
+  setFacts:
+    personaModelConsumer: true
+  when:
+    any:
+    - field: modelCreator
+      equals: No model creation, use existing model
+    - field: modelCreator
+      equals: Other
+    - field: modelCreator
+      equals: Unknown
+- id: f3_has_model_creation
+  description: Has model creation activities
+  setFacts:
+    hasModelCreation: true
+  when:
+    any:
+    - field: modelCreator
+      equals: Train traditional ML model
+    - field: modelCreator
+      equals: Fine tune LLM
+    - field: modelCreator
+      equals: Train LLM from scratch
+- id: f4_is_generative_ai
+  description: Generative AI when runtime includes LLM or multimodal
+  setFacts:
+    isGenerativeAi: true
+  when:
+    any:
+    - flag: llmMode
+      equals: true
+    - field: primaryRuntimeModelTypes
+      includes: LLM text
+    - field: primaryRuntimeModelTypes
+      includes: Multimodal LMM (text + image or audio)
+    - field: primaryRuntimeModelTypes
+      includes: Vision language model (VLM)
+    - repeatAny:
+        blockId: block4Models
+        predicate:
+          field: modelKind
+          in:
+          - LLM text
+          - Multimodal LMM (text + image or audio)
+          - Vision language model (VLM)
+- id: f5_uses_retrieval
+  description: Retrieval usage
+  setFacts:
+    usesRetrieval: true
+  when:
+    any:
+    - field: usesRetrievalRag
+      equals: 'Yes'
+    - field: outputGenerationMode
+      in:
+      - Retrieval only
+      - Retrieval plus generation
+    - field: aiCapabilityType
+      includes: Retrieval
+    - field: aiCapabilityType
+      includes: Embedding search
+- id: f6_outputs_persisted
+  description: Outputs stored beyond ephemeral display
+  setFacts:
+    persistsOutputs: true
+  when:
+    any:
+    - field: outputPersistence
+      notEquals: Ephemeral on screen only
+    - field: outputPersistenceRouting
+      notEquals: Ephemeral on screen only
+- id: f7_outputs_ephemeral
+  description: Outputs are ephemeral only
+  setFacts:
+    persistsOutputs: false
+  when:
+    all:
+    - field: outputPersistence
+      equals: Ephemeral on screen only
+- id: f8_external_exposure
+  description: External exposure based on access surface
+  setFacts:
+    hasExternalExposure: true
+  when:
+    any:
+    - flag: hasExternalExposure
+      equals: true
+    - field: accessSurface
+      in:
+      - External authenticated
+      - External public
+      - Partner or third party access
+- id: f9a_agentic_action_unknown
+  description: Agentic action is unknown when tool usage or actionability is unknown
+  setFacts:
+    hasAgenticAction: Unknown
+  when:
+    any:
+    - field: usesToolsOrIntegrations
+      equals: Unknown
+    - field: toolActionability
+      equals: Unknown
+- id: f9b_agentic_action_false
+  description: Explicit non-agentic when no tools or read-only tools are declared
+  setFacts:
+    hasAgenticAction: false
+  when:
+    any:
+    - field: usesToolsOrIntegrations
+      equals: 'No'
+    - field: toolActionability
+      in:
+      - No tools
+      - Read only
+- id: f9_agentic_action
+  description: Agent or tool action risk routing
+  setFacts:
+    hasAgenticAction: true
+  when:
+    any:
+    - flag: hasAgenticAction
+      equals: true
+    - field: aiCapabilityType
+      includes: Multi step tool use
+    - field: toolActionability
+      in:
+      - Write internal state
+      - Write external systems
+- id: f10a_custom_app_code_unknown
+  description: Custom app code ownership unknown when implementation ownership is
+    unknown
+  setFacts:
+    hasCustomAppCode: Unknown
+  when:
+    field: applicationImplementationOwnership
+    equals: Unknown
+- id: f10b_custom_app_code_false_vendor
+  description: No custom app code when using vendor SaaS or managed application
+  setFacts:
+    hasCustomAppCode: false
+  when:
+    field: applicationImplementationOwnership
+    equals: Vendor SaaS or managed application
+- id: f10_custom_app_code
+  description: Custom application code signal
+  setFacts:
+    hasCustomAppCode: true
+  when:
+    any:
+    - flag: hasCustomAppCode
+      equals: true
+    - field: applicationImplementationOwnership
+      in:
+      - Bank built and operated
+      - Hybrid bank plus vendor
+- id: f11_external_model_service
+  description: Uses external model service when provider not internal and model is
+    closed via API or vendor managed
+  setFacts:
+    usesExternalModelService: true
+  when:
+    any:
+    - repeatAny:
+        blockId: block4Models
+        predicate:
+          all:
+          - field: modelProvider
+            notEquals: Internal model
+          - any:
+            - field: modelType
+              equals: Closed model via API
+            - field: hostingResponsibility
+              equals: Vendor managed
+            - field: hostingResponsibility
+              equals: Shared
+- id: f12_transmits_data_externally
+  description: External transmission if any model block indicates prompts or artifacts
+    sent to provider
+  setFacts:
+    transmitsDataExternally: true
+  when:
+    any:
+    - repeatAny:
+        blockId: block4Models
+        predicate:
+          any:
+          - field: dataSentToModelProvider
+            includes: Prompts or user messages
+          - field: dataSentToModelProvider
+            includes: Retrieved context snippets
+          - field: dataSentToModelProvider
+            includes: User files
+          - field: dataSentToModelProvider
+            includes: System prompts
+          - field: dataSentToModelProvider
+            includes: Model outputs
+          - field: dataSentToModelProvider
+            includes: Unknown
+- id: f13_external_provider_retention_fact
+  description: Aggregate retention posture across model blocks
+  setFacts:
+    externalProviderDataRetention: Unknown
+  when:
+    any:
+    - repeatAny:
+        blockId: block4Models
+        predicate:
+          field: externalProviderRetention
+          equals: Unknown
+- id: f14_external_provider_traininguse_fact
+  description: Aggregate provider training use posture across model blocks
+  setFacts:
+    externalProviderTrainingUse: Unknown
+  when:
+    any:
+    - repeatAny:
+        blockId: block4Models
+        predicate:
+          field: externalProviderTrainingUse
+          equals: Unknown
+- id: f15_sensitive_data_training_yes
+  description: Sensitive personal data used in training, tuning, or evaluation
+  setFacts:
+    usesSensitiveDataInTraining: true
+  when:
+    any:
+    - repeatAny:
+        blockId: block6DataSources
+        predicate:
+          all:
+          - field: dataUsagePhase
+            includesAny:
+            - Training
+            - Tuning
+            - Evaluation
+          - any:
+            - field: containsSensitivePersonalData
+              equals: 'Yes'
+            - field: dataSensitivityLevel
+              equals: Restricted or regulated
+            - field: dataSensitivityLevel
+              equals: Confidential
+- id: f16_sensitive_data_runtime_yes
+  description: Sensitive personal data used at runtime, retrieval, or logs
+  setFacts:
+    usesSensitiveDataInRuntime: true
+  when:
+    any:
+    - field: usesNonPublicDataOrStoresUserInput
+      in:
+      - 'Yes'
+      - Unknown
+    - repeatAny:
+        blockId: block6DataSources
+        predicate:
+          all:
+          - field: dataUsagePhase
+            includesAny:
+            - Inference runtime
+            - Retrieval index
+            - Application logs or telemetry
+          - any:
+            - field: containsSensitivePersonalData
+              equals: 'Yes'
+            - field: dataSensitivityLevel
+              equals: Restricted or regulated
+            - field: dataSensitivityLevel
+              equals: Confidential
+- id: f17_sensitive_data_training_no
+  description: Explicit no sensitive training data when all training sources say No
+    and no restricted classifications
+  setFacts:
+    usesSensitiveDataInTraining: false
+  when:
+    all:
+    - repeatAllIfPresent:
+        blockId: block6DataSources
+        predicate:
+          any:
+          - field: dataUsagePhase
+            includesAny:
+            - Training
+            - Tuning
+            - Evaluation
+          - field: dataUsagePhase
+            includes: Other
+        allMustSatisfy:
+          all:
+          - field: containsSensitivePersonalData
+            equals: 'No'
+          - field: dataSensitivityLevel
+            in:
+            - Public
+            - Internal
+            - Unknown
+- id: f18_transmits_data_externally_false
+  description: Explicit no external transmission when all model blocks declare no
+    external transmission
+  setFacts:
+    transmitsDataExternally: false
+  when:
+    all:
+    - repeatAllIfPresent:
+        blockId: block4Models
+        predicate:
+          field: dataSentToModelProvider
+          includes: No external transmission
+- id: f19_external_provider_retention_true
+  description: External provider retention is true if any model block retains data
+    for abuse monitoring or service improvement
+  setFacts:
+    externalProviderDataRetention: true
+  when:
+    any:
+    - repeatAny:
+        blockId: block4Models
+        predicate:
+          field: externalProviderRetention
+          in:
+          - Retention for abuse monitoring only
+          - Retention for service improvement
+- id: f20_external_provider_retention_false
+  description: External provider retention is false if all model blocks declare no
+    retention
+  setFacts:
+    externalProviderDataRetention: false
+  when:
+    all:
+    - repeatAllIfPresent:
+        blockId: block4Models
+        predicate:
+          field: externalProviderRetention
+          equals: No retention
+- id: f21_external_provider_traininguse_true
+  description: External provider training use is true if any model block allows training
+    use
+  setFacts:
+    externalProviderTrainingUse: true
+  when:
+    any:
+    - repeatAny:
+        blockId: block4Models
+        predicate:
+          field: externalProviderTrainingUse
+          equals: 'Yes'
+- id: f22_external_provider_traininguse_false
+  description: External provider training use is false if all model blocks declare
+    no training use
+  setFacts:
+    externalProviderTrainingUse: false
+  when:
+    all:
+    - repeatAllIfPresent:
+        blockId: block4Models
+        predicate:
+          field: externalProviderTrainingUse
+          equals: 'No'
+- id: f23_requires_user_data_mgmt_true
+  description: User data management is required when runtime data sensitivity is unknown/true,
+    outputs persist, external transmission, or non public runtime data is used/stored
+  setFacts:
+    requiresUserDataManagement: true
+  when:
+    any:
+    - fact: usesSensitiveDataInRuntime
+      in:
+      - true
+      - Unknown
+    - fact: persistsOutputs
+      equals: true
+    - fact: transmitsDataExternally
+      equals: true
+    - field: usesNonPublicDataOrStoresUserInput
+      in:
+      - 'Yes'
+      - Unknown
+- id: f24_requires_user_data_mgmt_false
+  description: User data management not required when no sensitive runtime data, outputs
+    are ephemeral, no external transmission, and no non public runtime data or user
+    input storage
+  setFacts:
+    requiresUserDataManagement: false
+  when:
+    all:
+    - fact: usesSensitiveDataInRuntime
+      equals: false
+    - fact: persistsOutputs
+      equals: false
+    - fact: transmitsDataExternally
+      equals: false
+    - field: usesNonPublicDataOrStoresUserInput
+      equals: 'No'
+- id: f25_has_api_surface
+  description: API surface present when interaction channel includes API integration
+  setFacts:
+    hasApiSurface: true
+  when:
+    any:
+    - field: interactionChannel
+      includes: API integration
+fieldRules:
+- id: fr1_require_provider_fields_when_external_service
+  description: Require provider data handling fields only when external provider use
+    or external transmission is present
+  when:
+    any:
+    - fact: usesExternalModelService
+      equals: true
+    - fact: transmitsDataExternally
+      equals: true
+  setFieldState:
+  - blockId: block4Models
+    field: dataSentToModelProvider
+    required: true
+  - blockId: block4Models
+    field: externalProviderRetention
+    required: true
+  - blockId: block4Models
+    field: externalProviderTrainingUse
+    required: true
+- id: fr2_relax_provider_fields_when_internal_or_no_external_transmission
+  description: Make provider handling fields optional when there is no external service
+    and no external transmission
+  when:
+    all:
+    - fact: usesExternalModelService
+      equals: false
+    - fact: transmitsDataExternally
+      equals: false
+  setFieldState:
+  - blockId: block4Models
+    field: dataSentToModelProvider
+    required: false
+  - blockId: block4Models
+    field: externalProviderRetention
+    required: false
+  - blockId: block4Models
+    field: externalProviderTrainingUse
+    required: false
+assessmentRouting:
+- id: vayuAssessment
+  enabledWhen:
+    any:
+    - fact: isGenerativeAi
+      equals: true
+    - fact: hasModelCreation
+      equals: true
+    - field: usecaseCategory
+      exists: true
+  prefill:
+    useCases:
+      sourceField: usecaseCategory
+      mapping:
+        Customer eligibility or credit decisions: customerEligibilityOrCreditDecisions
+        Financial crime prevention: financialCrimePrevention
+        Financial and risk management decision: financialAndRiskManagementDecision
+        Customer influence and recommendations: customerInfluenceAndRecommendations
+        Customer communication and service: customerCommunicationAndService
+        Internal copilot or service with sensitive data: internalCopilotWithSensitiveData
+        Low risk internal productivity: lowRiskInternalProductivity
+        AI systems that influence other AI: aiThatInfluencesOtherAi
+      behaviorWhenUnknown: leaveBlank
+  questionRules:
+  - questionId: G2
+    defaultAnswerFromFacts:
+    - when:
+        field: usecaseCategory
+        in:
+        - Customer eligibility or credit decisions
+        - Financial crime prevention
+        - Financial and risk management decision
+      answer: true
+    - when:
+        field: usecaseCategory
+        exists: true
+      answer: false
+    requiredWhen:
+      fact: isGenerativeAi
+      equals: true
+  - questionId: G3
+    defaultAnswerFromFacts:
+    - when:
+        any:
+        - field: usecaseCategory
+          in: &id001
+          - Customer communication and service
+          - Customer influence and recommendations
+        - fact: hasExternalExposure
+          equals: true
+        - field: interactionChannel
+          includes: Chat interface
+        - field: interactionChannel
+          includes: Voice interface
+      answer: true
+    - when:
+        fact: hasExternalExposure
+        equals: false
+      answer: false
+    requiredWhen:
+      fact: isGenerativeAi
+      equals: true
+  - questionId: RD1
+    defaultAnswerFromFacts:
+    - when:
+        fact: hasExternalExposure
+        equals: true
+      answer: true
+    - when:
+        fact: hasExternalExposure
+        equals: false
+      answer: false
+    requiredWhen:
+      fact: hasExternalExposure
+      equals: true
+  - questionId: RD2
+    defaultAnswerFromFacts:
+    - when:
+        fact: usesSensitiveDataInRuntime
+        equals: true
+      answer: true
+    - when:
+        fact: usesSensitiveDataInTraining
+        equals: true
+      answer: true
+    - when:
+        fact: usesSensitiveDataInRuntime
+        equals: false
+      answer: false
+    requiredWhen:
+      any:
+      - fact: usesSensitiveDataInRuntime
+        in:
+        - true
+        - Unknown
+      - fact: usesSensitiveDataInTraining
+        in:
+        - true
+        - Unknown
+  - questionId: RD3
+    defaultAnswerFromFacts:
+    - when:
+        fact: hasAgenticAction
+        equals: true
+      answer: true
+    - when:
+        fact: hasAgenticAction
+        equals: false
+      answer: false
+    requiredWhen:
+      fact: hasAgenticAction
+      in:
+      - true
+      - Unknown
+  - questionId: RD4
+    defaultAnswerFromFacts:
+    - when:
+        any:
+        - fact: hasExternalExposure
+          equals: true
+        - field: usecaseCategory
+          in: *id001
+        - field: interactionChannel
+          includes: Chat interface
+      answer: true
+    - when:
+        fact: hasExternalExposure
+        equals: false
+      answer: false
+    requiredWhen:
+      fact: isGenerativeAi
+      equals: true
+  - questionId: RD5
+    defaultAnswerFromFacts:
+    - when:
+        field: usecaseCategory
+        in:
+        - Customer eligibility or credit decisions
+        - Financial crime prevention
+        - Financial and risk management decision
+        - Internal copilot or service with sensitive data
+        - AI systems that influence other AI
+      answer: true
+    - when:
+        field: usecaseCategory
+        equals: Low risk internal productivity
+      answer: false
+    requiredWhen:
+      fact: isGenerativeAi
+      equals: true
+  - questionId: C1
+    requiredWhen:
+      any:
+      - fact: hasExternalExposure
+        equals: true
+      - field: audienceScope
+        in:
+        - External only
+        - Internal and external
+- id: riskSelfAssessment
+  enabledWhen:
+    fact: isGenerativeAi
+    equals: true
+  personas:
+    personaModelCreator:
+      fact: personaModelCreator
+      equals: true
+    personaModelConsumer:
+      fact: personaModelConsumer
+      equals: true
+  questionRules:
+  - questionId: Q1
+    visibleWhen:
+      fact: hasModelCreation
+      equals: true
+    defaultAnswerFromFacts:
+    - when:
+        fact: usesSensitiveDataInTraining
+        equals: true
+      answer: Maybe
+    - when:
+        fact: usesSensitiveDataInTraining
+        equals: Unknown
+      answer: Maybe
+  - questionId: Q2
+    visibleWhen:
+      fact: hasModelCreation
+      equals: true
+  - questionId: Q3
+    visibleWhen:
+      fact: hasModelCreation
+      equals: true
+    defaultAnswerFromFacts:
+    - when:
+        fact: usesSensitiveDataInTraining
+        equals: true
+      answer: true
+    - when:
+        fact: usesSensitiveDataInTraining
+        equals: false
+      answer: false
+    - when:
+        fact: usesSensitiveDataInTraining
+        equals: Unknown
+      answer: Maybe
+  - questionId: Q4
+    defaultAnswerFromFacts:
+    - when:
+        fact: usesSensitiveDataInRuntime
+        equals: true
+      answer: true
+    - when:
+        fact: usesSensitiveDataInRuntime
+        equals: false
+      answer: false
+    requiredWhen:
+      fact: requiresUserDataManagement
+      in:
+      - true
+      - Unknown
+    visibleWhen:
+      fact: requiresUserDataManagement
+      equals: true
+  - questionId: Q5
+    visibleWhen:
+      fact: isGenerativeAi
+      equals: true
+  - questionId: Q6
+    visibleWhen:
+      fact: isGenerativeAi
+      equals: true
+  - questionId: Q7
+    visibleWhen:
+      fact: hasModelCreation
+      equals: true
+  - questionId: Q8
+    visibleWhen:
+      fact: hasModelCreation
+      equals: true
+  - questionId: Q9
+    requiredWhen:
+      any:
+      - fact: hasExternalExposure
+        equals: true
+      - fact: hasApiSurface
+        equals: true
+    visibleWhen:
+      any:
+      - fact: hasExternalExposure
+        equals: true
+      - fact: hasApiSurface
+        equals: true
+  - questionId: Q10
+    requiredWhen:
+      fact: hasCustomAppCode
+      in:
+      - true
+      - Unknown
+    visibleWhen:
+      fact: hasCustomAppCode
+      in:
+      - true
+      - Unknown
+    defaultAnswerFromFacts:
+    - when:
+        fact: hasCustomAppCode
+        equals: true
+      answer: Maybe
+    - when:
+        fact: hasCustomAppCode
+        equals: Unknown
+      answer: Maybe
+  - questionId: Q11
+    visibleWhen:
+      any:
+      - fact: hasExternalExposure
+        equals: true
+      - fact: hasAgenticAction
+        equals: true
+      - fact: usesRetrieval
+        equals: true
+      - fact: usesSensitiveDataInRuntime
+        in:
+        - true
+        - Unknown
+  - questionId: Q12
+    defaultAnswerFromFacts:
+    - when:
+        fact: hasAgenticAction
+        equals: true
+      answer: true
+    - when:
+        fact: hasAgenticAction
+        equals: false
+      answer: false
+    - when:
+        fact: hasAgenticAction
+        equals: Unknown
+      answer: Maybe
+    requiredWhen:
+      fact: hasAgenticAction
+      in:
+      - true
+      - Unknown
+validation:
+  enforceRiskIdIntegrity: true
+  enforceAssessmentQuestionIdUniqueness: true
+  notes:
+  - Keep risks.yaml as the canonical registry for risk IDs
+  - Keep self-assessment.yaml as question content that references risk IDs only
+  - Keep routing.yaml as the only place that maps inventory facts to question relevance
+    and requiredness

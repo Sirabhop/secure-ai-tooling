@@ -1,7 +1,8 @@
 """Unified results page – tier, risks, and controls in one view."""
 import streamlit as st
 
-from app.ui_utils import render_chips, render_info_box, render_tier_badge
+from app.architecture import highlight_nodes, load_mermaid_file, render_mermaid
+from app.ui_utils import render_chips, render_info_box, render_tier_badge, reset_assessment
 
 
 def render_results():
@@ -74,9 +75,9 @@ def render_results():
         _render_actions()
         return
 
-    # ── Tabs: Risks | Controls | Deep Dive ───────────────────────────────────
-    tab_risks, tab_controls, tab_detail = st.tabs(
-        [f"Risks ({len(relevant_risks)})", f"Controls ({len(controls)})", "Deep Dive"]
+    # ── Tabs: Risks | Controls | Deep Dive | Architecture ──────────────────
+    tab_risks, tab_controls, tab_detail, tab_arch = st.tabs(
+        [f"Risks ({len(relevant_risks)})", f"Controls ({len(controls)})", "Deep Dive", "Architecture"]
     )
 
     # -- Tab 1: Risks overview ------------------------------------------------
@@ -133,8 +134,54 @@ def render_results():
             if selected_display:
                 _render_risk_deep_dive(risk_map[selected_display], loader)
 
+    # -- Tab 4: Architecture diagram with highlighted results ------------------
+    with tab_arch:
+        _render_results_architecture(loader, relevant_risks, controls)
+
     st.markdown("---")
     _render_actions()
+
+
+# ── Architecture diagram in results ──────────────────────────────────────────
+
+def _render_results_architecture(loader, relevant_risks: list, controls: list):
+    """Render risk-map architecture diagram with identified risks/controls highlighted."""
+    diagram_type = st.radio(
+        "Diagram",
+        ["Risk Mapping", "Controls Mapping", "Component Architecture"],
+        horizontal=True,
+        key="results_arch_radio",
+    )
+    type_map = {
+        "Risk Mapping": "risk",
+        "Controls Mapping": "control",
+        "Component Architecture": "component",
+    }
+    height_map = {"risk": 1400, "control": 1000, "component": 700}
+    dtype = type_map[diagram_type]
+
+    raw = load_mermaid_file(dtype)
+    if raw is None:
+        render_info_box(
+            "Architecture diagram files not found. Run the validator to generate them.",
+            "warning",
+        )
+        return
+
+    highlight_ids = list(relevant_risks)
+    highlight_ids += [c.get("id") for c in controls if c.get("id")]
+    for ctrl in controls:
+        for comp_id in ctrl.get("components", []):
+            if comp_id not in ("all", "none") and comp_id not in highlight_ids:
+                highlight_ids.append(comp_id)
+
+    code = highlight_nodes(raw, highlight_ids) if highlight_ids else raw
+
+    st.caption(
+        f"Nodes highlighted in **yellow** are relevant to your assessment "
+        f"({len(relevant_risks)} risks, {len(controls)} controls)."
+    )
+    render_mermaid(code, height=height_map.get(dtype, 1000), key=f"results_{dtype}")
 
 
 # ── Action buttons ───────────────────────────────────────────────────────────
@@ -147,12 +194,7 @@ def _render_actions():
             st.rerun()
     with col2:
         if st.button("Start New Assessment", use_container_width=True, type="primary"):
-            for key in ("answers", "selected_personas", "selected_use_cases",
-                        "vayu_result", "relevant_risks", "recommended_controls"):
-                st.session_state[key] = [] if isinstance(st.session_state.get(key), list) else (
-                    {} if isinstance(st.session_state.get(key), dict) else None
-                )
-            st.session_state.assessment_step = 0
+            reset_assessment()
             st.session_state.current_page = "Assessment"
             st.rerun()
 

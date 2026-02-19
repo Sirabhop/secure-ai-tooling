@@ -32,6 +32,7 @@ class RiskMapDataLoader:
         self._self_assessment: Optional[Dict[str, Any]] = None
         self._personas: Optional[Dict[str, Any]] = None
         self._ai_inventory_schema: Optional[Dict[str, Any]] = None
+        self._routing: Optional[Dict[str, Any]] = None
         self._load_errors: Dict[str, str] = {}
         
     def load_yaml(self, filename: str) -> Dict[str, Any]:
@@ -161,9 +162,233 @@ class RiskMapDataLoader:
                 self._ai_inventory_schema = {}
         return self._ai_inventory_schema
 
+    @property
+    def routing(self) -> Dict[str, Any]:
+        """Get routing config, loading if necessary."""
+        if self._routing is None:
+            try:
+                self._routing = self.load_yaml("routing.yaml")
+            except DataLoadError:
+                self._routing = {}
+        return self._routing
+
+    # ── Routing engine ────────────────────────────────────────────────────
+
+    def _eval_routing_predicate(self, pred: dict, row: Dict[str, Any]) -> bool:
+        """Evaluate a predicate against a single data row (handles nesting)."""
+        if "all" in pred:
+            return all(self._eval_routing_predicate(p, row) for p in pred["all"])
+        if "any" in pred:
+            return any(self._eval_routing_predicate(p, row) for p in pred["any"])
+
+        field = pred.get("field", "")
+        value = row.get(field)
+
+        if "exists" in pred:
+            return (value is not None and value != "" and value != []) == pred["exists"]
+        if "equals" in pred:
+            return value == pred["equals"]
+        if "notEquals" in pred:
+            return value != pred["notEquals"]
+        if "in" in pred:
+            return value in pred["in"]
+        if "includes" in pred:
+            return (pred["includes"] in value) if isinstance(value, list) else value == pred["includes"]
+        if "includesAny" in pred:
+            targets = pred["includesAny"]
+            return any(t in value for t in targets) if isinstance(value, list) else value in targets
+        return False
+
+    def _eval_routing_condition(
+        self, cond: dict, data: Dict[str, Any], flags: Dict[str, Any], repeat_blocks: Dict[str, list],
+    ) -> bool:
+        """Evaluate a single top-level routing condition (field, flag, fact, repeatAny, repeatAllIfPresent)."""
+        if "field" in cond:
+            return self._eval_routing_predicate(cond, data)
+
+        if "flag" in cond:
+            flag_val = flags.get(cond["flag"])
+            if "equals" in cond:
+                return flag_val == cond["equals"]
+            return False
+
+        if "fact" in cond:
+            fact_val = flags.get(cond["fact"])
+            if "equals" in cond:
+                return fact_val == cond["equals"]
+            if "in" in cond:
+                return fact_val in cond["in"]
+            return False
+
+        if "repeatAny" in cond:
+            ra = cond["repeatAny"]
+            rows = repeat_blocks.get(ra.get("blockId", ""), [])
+            predicate = ra.get("predicate", {})
+            return any(self._eval_routing_predicate(predicate, r) for r in rows)
+
+        if "repeatAllIfPresent" in cond:
+            raip = cond["repeatAllIfPresent"]
+            rows = repeat_blocks.get(raip.get("blockId", ""), [])
+            filter_pred = raip.get("predicate", {})
+            must_satisfy = raip.get("allMustSatisfy", {})
+            matching = [r for r in rows if self._eval_routing_predicate(filter_pred, r)]
+            if not matching:
+                return True
+            return all(self._eval_routing_predicate(must_satisfy, r) for r in matching)
+
+        return False
+
+    def _eval_routing_when(
+        self, when: dict, data: Dict[str, Any], flags: Dict[str, Any], repeat_blocks: Dict[str, list],
+    ) -> bool:
+        """Evaluate a when clause from routing.yaml factRules."""
+        if not when:
+            return False
+        if "any" in when:
+            return any(self._eval_routing_condition(c, data, flags, repeat_blocks) for c in when["any"])
+        if "all" in when:
+            return all(self._eval_routing_condition(c, data, flags, repeat_blocks) for c in when["all"])
+        return False
+
+    def _eval_question_condition(
+        self, when: dict, facts: Dict[str, Any], inventory_data: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Evaluate a condition from questionRules (defaultAnswerFromFacts, visibleWhen, requiredWhen).
+
+        Handles fact references (checked against computed facts) and field
+        references (checked against inventory data).
+        """
+        if "fact" in when:
+            val = facts.get(when["fact"])
+            if "equals" in when:
+                return val == when["equals"]
+            if "in" in when:
+                return val in when["in"]
+            return False
+        if "field" in when:
+            inv = inventory_data or {}
+            val = inv.get(when["field"])
+            if "exists" in when:
+                return (val is not None and val != "" and val != []) == when["exists"]
+            if "equals" in when:
+                return val == when["equals"]
+            if "in" in when:
+                return val in when["in"]
+            if "includes" in when:
+                return (when["includes"] in val) if isinstance(val, list) else val == when["includes"]
+            return False
+        if "any" in when:
+            return any(self._eval_question_condition(c, facts, inventory_data) for c in when["any"])
+        if "all" in when:
+            return all(self._eval_question_condition(c, facts, inventory_data) for c in when["all"])
+        return False
+
+    def compute_inventory_flags(self, inventory_data: Dict[str, Any], repeat_blocks: Dict[str, list]) -> Dict[str, Any]:
+        """Recompute AI inventory flags from schema rules."""
+        schema = self.ai_inventory_schema
+        flags: Dict[str, Any] = dict(schema.get("flags", {}).get("defaults", {}))
+        for rule in schema.get("rules", []):
+            when = rule.get("when")
+            set_flags = rule.get("setFlags")
+            if not set_flags or not when:
+                continue
+            if self._eval_routing_when(when, inventory_data, {}, repeat_blocks):
+                flags.update(set_flags)
+        return flags
+
+    def compute_routing_facts(self, inventory_data: Dict[str, Any], repeat_blocks: Dict[str, list]) -> Dict[str, Any]:
+        """Compute routing facts from inventory data → inventory flags → factRules.
+
+        Rules are evaluated top-to-bottom. Later rules can reference facts set
+        by earlier rules via ``fact:`` conditions because previously computed
+        facts are merged into the flags context on each iteration.
+        """
+        inv_flags = self.compute_inventory_flags(inventory_data, repeat_blocks)
+        routing = self.routing
+        facts: Dict[str, Any] = dict(routing.get("facts", {}).get("defaults", {}))
+        for rule in routing.get("factRules", []):
+            when = rule.get("when", {})
+            set_facts = rule.get("setFacts", {})
+            if not set_facts:
+                continue
+            merged_flags = {**inv_flags, **facts}
+            if self._eval_routing_when(when, inventory_data, merged_flags, repeat_blocks):
+                facts.update(set_facts)
+        return facts
+
+    def get_prefilled_assessment_data(
+        self, inventory_data: Dict[str, Any], repeat_blocks: Dict[str, list],
+    ) -> Dict[str, Any]:
+        """Compute all prefill data for assessments from inventory.
+
+        Returns dict with:
+          facts, prefilled_answers, prefilled_use_cases, prefilled_personas,
+          hidden_questions (set of question IDs whose visibleWhen evaluated to False).
+        """
+        empty = {
+            "facts": {}, "prefilled_answers": {}, "prefilled_use_cases": [],
+            "prefilled_personas": [], "hidden_questions": set(),
+        }
+        if not inventory_data:
+            return empty
+
+        facts = self.compute_routing_facts(inventory_data, repeat_blocks)
+        routing = self.routing
+
+        prefilled_answers: Dict[str, str] = {}
+        prefilled_use_cases: List[str] = []
+        prefilled_personas: List[str] = []
+        hidden_questions: set = set()
+
+        for route in routing.get("assessmentRouting", []):
+            # Use case prefill
+            uc_cfg = route.get("prefill", {}).get("useCases", {})
+            if uc_cfg:
+                source_val = inventory_data.get(uc_cfg.get("sourceField", ""))
+                mapped = uc_cfg.get("mapping", {}).get(source_val)
+                if mapped:
+                    prefilled_use_cases.append(mapped)
+
+            # Persona prefill
+            for pid, pcond in route.get("personas", {}).items():
+                fact_key = pcond.get("fact", "")
+                if fact_key and facts.get(fact_key) == pcond.get("equals"):
+                    prefilled_personas.append(pid)
+
+            # Question rules: visibility + answer prefill
+            for qr in route.get("questionRules", []):
+                q_id = qr.get("questionId")
+
+                # Visibility check
+                vis_when = qr.get("visibleWhen")
+                if vis_when and not self._eval_question_condition(vis_when, facts, inventory_data):
+                    hidden_questions.add(q_id)
+                    continue
+
+                # Answer prefill
+                for d in qr.get("defaultAnswerFromFacts", []):
+                    when = d.get("when", {})
+                    if self._eval_question_condition(when, facts, inventory_data):
+                        answer = d.get("answer")
+                        if answer is True:
+                            prefilled_answers[q_id] = "Yes"
+                        elif answer is False:
+                            prefilled_answers[q_id] = "No"
+                        else:
+                            prefilled_answers[q_id] = str(answer)
+                        break
+
+        return {
+            "facts": facts,
+            "prefilled_answers": prefilled_answers,
+            "prefilled_use_cases": prefilled_use_cases,
+            "prefilled_personas": prefilled_personas,
+            "hidden_questions": hidden_questions,
+        }
+
     def has_load_errors(self) -> bool:
         """Check if there were any errors during data loading."""
-        return len(self._load_errors) > 0
+        return bool(self._load_errors)
     
     def get_load_errors(self) -> Dict[str, str]:
         """Get dictionary of load errors."""
@@ -330,7 +555,7 @@ class RiskMapDataLoader:
                 if risks:
                     relevant_risks.update(risks)
         
-        return sorted(list(relevant_risks))
+        return sorted(relevant_risks)
     
     def get_controls_for_risks(self, risk_ids: List[str]) -> List[Dict[str, Any]]:
         """Get all controls that address the given risks."""

@@ -42,7 +42,7 @@ for key, default in _DEFAULTS.items():
         st.session_state[key] = default
 
 # ── Data loader ──────────────────────────────────────────────────────────────
-if st.session_state.data_loader is None:
+if st.session_state.data_loader is None or not hasattr(st.session_state.data_loader, "get_prefilled_assessment_data"):
     try:
         st.session_state.data_loader = RiskMapDataLoader()
         if st.session_state.data_loader.has_load_errors():
@@ -56,7 +56,7 @@ if st.session_state.data_loader is None:
         st.stop()
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
-NAV = ["Home", "AI Inventory", "Assessment", "Results"]
+NAV = ["Home", "AI Inventory", "Assessment", "Results", "Architecture"]
 
 with st.sidebar:
     st.markdown("### 🛡️ CoSAI Risk Map")
@@ -176,4 +176,12 @@ elif page == "Results":
         render_results()
     except Exception as e:
         st.error(f"Error loading results: {e}")
+        st.exception(e)
+
+elif page == "Architecture":
+    try:
+        from app.architecture import render_architecture_page
+        render_architecture_page()
+    except Exception as e:
+        st.error(f"Error loading architecture: {e}")
         st.exception(e)

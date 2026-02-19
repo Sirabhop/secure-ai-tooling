@@ -1,0 +1,13 @@
+selectorLanguage: domainSpecificLanguage
+operators:
+  canonical:
+    equals: strict equality
+    notEquals: strict inequality
+    in: membership in a list of literals
+    exists: field presence and non null
+    any: boolean OR over a list of predicates
+    all: boolean AND over a list of predicates
+  aliases:
+    eq: equals
+    ne: notEquals
+    oneOf: in

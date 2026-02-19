@@ -1,7 +1,7 @@
 """Wizard-style assessment page for CoSAI Risk Map."""
 import streamlit as st
 
-from app.ui_utils import render_chips, render_info_box, render_step_indicator
+from app.ui_utils import render_chips, render_info_box, render_step_indicator, reset_assessment
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -38,8 +38,14 @@ def _fmt_use_case(label: str) -> str:
     return spaced.replace(" Or ", " or ").title()
 
 
-def _question_widget(question: dict, loader, prefix: str, idx: int, total: int):
-    """Render one question card and return selected answer (or None)."""
+def _question_widget(
+    question: dict, loader, prefix: str, idx: int, total: int,
+    *, prefilled: bool = False,
+):
+    """Render one question card with radio selector.
+
+    When *prefilled* is True the card uses prefilled styling.
+    """
     q_id = question.get("id")
     if not q_id:
         return
@@ -47,17 +53,20 @@ def _question_widget(question: dict, loader, prefix: str, idx: int, total: int):
     if not text_items:
         return
 
-    answered = q_id in st.session_state.answers
-    css_cls = "answered" if answered else ""
+    if prefilled:
+        css_cls = "answered prefilled"
+        label_prefix = "Prefilled"
+    else:
+        css_cls = "answered" if q_id in st.session_state.answers else ""
+        label_prefix = "Question"
 
     st.markdown(
         f'<div class="q-card {css_cls}">'
-        f'<div class="q-number">Question {idx} of {total}</div>'
+        f'<div class="q-number">{label_prefix} {idx} of {total}</div>'
         f'</div>',
         unsafe_allow_html=True,
     )
 
-    # Question text
     st.markdown(f"**{text_items[0]}**")
     if len(text_items) > 1:
         st.caption(loader.format_text_list(text_items[1:]))
@@ -67,17 +76,12 @@ def _question_widget(question: dict, loader, prefix: str, idx: int, total: int):
     if not labels:
         return
 
-    # Use None sentinel so no option is pre-selected for unanswered questions
     current = st.session_state.answers.get(q_id)
-    options = labels
-    if current in options:
-        idx_sel = options.index(current)
-    else:
-        idx_sel = None  # nothing selected yet
+    idx_sel = labels.index(current) if current in labels else None
 
     selected = st.radio(
         "Your answer",
-        options=options,
+        options=labels,
         index=idx_sel,
         key=f"{prefix}_{q_id}",
         label_visibility="collapsed",
@@ -88,10 +92,45 @@ def _question_widget(question: dict, loader, prefix: str, idx: int, total: int):
         st.session_state.answers[q_id] = selected
 
 
+# ── Prefill data computation ────────────────────────────────────────────────
+
+def _get_prefill_data(loader) -> dict:
+    """Compute prefill data from AI inventory if available."""
+    inventory_data = st.session_state.get("inventory_data", {})
+    has_data = inventory_data and any(v for v in inventory_data.values() if v)
+    if not has_data:
+        return {"facts": {}, "prefilled_answers": {}, "prefilled_use_cases": [], "prefilled_personas": [], "hidden_questions": set()}
+
+    repeat_blocks = {}
+    for k in st.session_state:
+        if isinstance(k, str) and k.startswith("inventory_repeat_blocks_"):
+            v = st.session_state[k]
+            if isinstance(v, list):
+                repeat_blocks[k[len("inventory_repeat_blocks_"):]] = v
+
+    return loader.get_prefilled_assessment_data(inventory_data, repeat_blocks)
+
+
+def _apply_prefills(prefill_data: dict):
+    """Auto-populate session state from prefill data (only for empty slots)."""
+    for q_id, answer in prefill_data.get("prefilled_answers", {}).items():
+        if q_id not in st.session_state.answers:
+            st.session_state.answers[q_id] = answer
+
+    if not st.session_state.selected_use_cases and prefill_data.get("prefilled_use_cases"):
+        st.session_state.selected_use_cases = list(prefill_data["prefilled_use_cases"])
+
+    if not st.session_state.selected_personas and prefill_data.get("prefilled_personas"):
+        st.session_state.selected_personas = list(prefill_data["prefilled_personas"])
+
+
 # ── Step renderers ───────────────────────────────────────────────────────────
 
-def _step_setup(loader):
+def _step_setup(loader, prefill_data: dict):
     """Step 0 – use cases + persona selection."""
+    has_prefill = bool(prefill_data.get("prefilled_use_cases") or prefill_data.get("prefilled_personas"))
+
+    # ─ Use cases ─
     st.subheader("Select your use cases")
     vayu_uc = loader.get_vayu_use_cases()
     uc_text = loader.format_text_list(vayu_uc.get("text", []))
@@ -104,6 +143,16 @@ def _step_setup(loader):
         if lbl:
             uc_options[_fmt_use_case(lbl)] = lbl
 
+    if has_prefill and prefill_data.get("prefilled_use_cases"):
+        prefilled_uc_labels = set(prefill_data["prefilled_use_cases"])
+        prefilled_display = [n for n, v in uc_options.items() if v in prefilled_uc_labels]
+        if prefilled_display:
+            st.markdown(
+                f'<div class="prefill-badge">Prefilled from AI Inventory: '
+                f'<strong>{", ".join(prefilled_display)}</strong></div>',
+                unsafe_allow_html=True,
+            )
+
     selected_names = st.multiselect(
         "Use cases",
         options=list(uc_options.keys()),
@@ -115,7 +164,7 @@ def _step_setup(loader):
 
     st.markdown("---")
 
-    # Persona selection
+    # ─ Persona selection ─
     st.subheader("Select your role(s)")
     persona_q = loader.get_persona_question()
     personas_data = loader.personas
@@ -142,6 +191,16 @@ def _step_setup(loader):
         st.error("No roles available.")
         return False
 
+    if has_prefill and prefill_data.get("prefilled_personas"):
+        prefilled_pids = set(prefill_data["prefilled_personas"])
+        prefilled_display = [n for n, v in persona_opts.items() if v in prefilled_pids]
+        if prefilled_display:
+            st.markdown(
+                f'<div class="prefill-badge">Prefilled from AI Inventory: '
+                f'<strong>{", ".join(prefilled_display)}</strong></div>',
+                unsafe_allow_html=True,
+            )
+
     selected_persona_names = st.multiselect(
         "Roles",
         options=list(persona_opts.keys()),
@@ -163,62 +222,103 @@ def _step_setup(loader):
     return True
 
 
-def _step_context(loader):
+def _step_context(loader, prefill_data: dict):
     """Step 1 – Vayu / tier-setting questions."""
-    vayu_qs = loader.get_vayu_questions()
-    total = len(vayu_qs)
-    answered = sum(1 for q in vayu_qs if q.get("id") in st.session_state.answers)
+    hidden_ids = prefill_data.get("hidden_questions", set())
+    prefilled_ids = set(prefill_data.get("prefilled_answers", {}).keys())
+
+    vayu_qs = [q for q in loader.get_vayu_questions() if q.get("id") not in hidden_ids]
+
+    prefilled_qs = [q for q in vayu_qs if q.get("id") in prefilled_ids]
+    manual_qs = [q for q in vayu_qs if q.get("id") not in prefilled_ids]
+
+    total_all = len(vayu_qs)
+    answered_all = sum(1 for q in vayu_qs if q.get("id") in st.session_state.answers)
 
     st.subheader("Context questions")
     st.caption(
-        "These questions determine your risk tier. "
-        f"{answered} of {total} answered."
+        f"These questions determine your risk tier. "
+        f"{answered_all} of {total_all} answered."
     )
-    st.progress(answered / total if total else 0)
+    st.progress(answered_all / total_all if total_all else 0)
 
-    for idx, q in enumerate(vayu_qs, 1):
-        _question_widget(q, loader, "ctx", idx, total)
+    # Prefilled section (collapsed)
+    if prefilled_qs:
+        with st.expander(
+            f"Prefilled from AI Inventory ({len(prefilled_qs)} questions)",
+            expanded=False,
+        ):
+            st.caption("These answers were derived from your AI Inventory. Expand to review or edit.")
+            for idx, q in enumerate(prefilled_qs, 1):
+                _question_widget(q, loader, "ctx_pf", idx, len(prefilled_qs), prefilled=True)
 
-    return answered == total
+    # Manual questions
+    if manual_qs:
+        total_manual = len(manual_qs)
+        for idx, q in enumerate(manual_qs, 1):
+            _question_widget(q, loader, "ctx", idx, total_manual)
+    elif not prefilled_qs:
+        render_info_box("No context questions available.", "info")
+
+    return answered_all == total_all
 
 
-def _step_risk_questions(loader):
+def _step_risk_questions(loader, prefill_data: dict):
     """Step 2 – persona-filtered risk questions."""
+    hidden_ids = prefill_data.get("hidden_questions", set())
     all_qs = loader.get_questions()
     relevant = [
         q for q in all_qs
-        if any(p in st.session_state.selected_personas for p in q.get("personas", []))
+        if q.get("id") not in hidden_ids
+        and any(p in st.session_state.selected_personas for p in q.get("personas", []))
     ]
 
     if not relevant:
         render_info_box("No risk questions for your selected roles.", "info")
         return True
 
-    total = len(relevant)
-    answered = sum(1 for q in relevant if q.get("id") in st.session_state.answers)
+    prefilled_ids = set(prefill_data.get("prefilled_answers", {}).keys())
+    prefilled_qs = [q for q in relevant if q.get("id") in prefilled_ids]
+    manual_qs = [q for q in relevant if q.get("id") not in prefilled_ids]
+
+    total_all = len(relevant)
+    answered_all = sum(1 for q in relevant if q.get("id") in st.session_state.answers)
 
     st.subheader("Risk questions")
     st.caption(
-        f"Tailored to your role(s). {answered} of {total} answered."
+        f"Tailored to your role(s). {answered_all} of {total_all} answered."
     )
-    st.progress(answered / total if total else 0)
+    st.progress(answered_all / total_all if total_all else 0)
 
-    for idx, q in enumerate(relevant, 1):
-        _question_widget(q, loader, "rsk", idx, total)
-        # Show which personas this applies to
+    # Prefilled section (collapsed)
+    if prefilled_qs:
+        with st.expander(
+            f"Prefilled from AI Inventory ({len(prefilled_qs)} questions)",
+            expanded=False,
+        ):
+            st.caption("These answers were derived from your AI Inventory. Expand to review or edit.")
+            for idx, q in enumerate(prefilled_qs, 1):
+                _question_widget(q, loader, "rsk_pf", idx, len(prefilled_qs), prefilled=True)
+                q_personas = q.get("personas", [])
+                if q_personas:
+                    names = [loader.personas.get(p, {}).get("title", p) for p in q_personas]
+                    render_chips(names, "purple")
+
+    # Manual questions
+    for idx, q in enumerate(manual_qs, 1):
+        _question_widget(q, loader, "rsk", idx, len(manual_qs))
         q_personas = q.get("personas", [])
         if q_personas:
             names = [loader.personas.get(p, {}).get("title", p) for p in q_personas]
             render_chips(names, "purple")
 
-    return answered == total
+    return answered_all == total_all
 
 
 def _step_review(loader):
     """Step 3 – summary before navigating to results."""
     st.subheader("Review & submit")
 
-    # Calculate results
     try:
         vayu = loader.calculate_vayu_tier(
             st.session_state.selected_use_cases,
@@ -237,7 +337,6 @@ def _step_review(loader):
 
     controls = loader.get_controls_for_risks(risks) if risks else []
 
-    # Metrics
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Questions Answered", len(st.session_state.answers))
     c2.metric("Risk Tier", vayu.get("label", "—").upper())
@@ -251,7 +350,6 @@ def _step_review(loader):
 
     st.markdown("---")
 
-    # Unanswered warning
     vayu_qs = loader.get_vayu_questions()
     all_risk_qs = loader.get_questions()
     relevant_qs = [
@@ -266,7 +364,6 @@ def _step_review(loader):
             "You can still view results, but answering all gives better insights."
         )
 
-    # Submit
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         if st.button("View Results", type="primary", use_container_width=True):
@@ -281,26 +378,41 @@ def _step_review(loader):
 
 def render_assessment():
     """Render the wizard-style assessment."""
-    st.title("🔍 Risk Assessment")
+    st.title("Risk Assessment")
 
     step = st.session_state.get("assessment_step", 0)
     render_step_indicator(STEP_LABELS, step)
 
     loader = st.session_state.data_loader
 
+    # Compute prefill data from inventory
+    prefill_data = _get_prefill_data(loader)
+    _apply_prefills(prefill_data)
+
+    has_prefill = bool(prefill_data.get("prefilled_answers"))
+    if has_prefill:
+        n = len(prefill_data["prefilled_answers"])
+        st.markdown(
+            f'<div class="prefill-banner">'
+            f'<strong>{n} assessment question(s)</strong> prefilled from your AI Inventory. '
+            f'Look for the collapsed sections below to review or edit.'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
     # Render current step
     can_advance = True
     if step == 0:
-        can_advance = _step_setup(loader)
+        can_advance = _step_setup(loader, prefill_data)
     elif step == 1:
-        _step_context(loader)
-        can_advance = True  # allow moving forward even if not all answered
+        _step_context(loader, prefill_data)
+        can_advance = True
     elif step == 2:
-        _step_risk_questions(loader)
+        _step_risk_questions(loader, prefill_data)
         can_advance = True
     elif step == 3:
         _step_review(loader)
-        return  # review step has its own submit button
+        return
 
     # Navigation buttons
     st.markdown("---")
@@ -322,10 +434,5 @@ def render_assessment():
     if st.session_state.answers:
         st.markdown("---")
         if st.button("Reset assessment", type="secondary"):
-            for key in ("answers", "selected_personas", "selected_use_cases",
-                        "vayu_result", "relevant_risks", "recommended_controls"):
-                st.session_state[key] = [] if isinstance(st.session_state.get(key), list) else (
-                    {} if isinstance(st.session_state.get(key), dict) else None
-                )
-            st.session_state.assessment_step = 0
+            reset_assessment()
             st.rerun()
