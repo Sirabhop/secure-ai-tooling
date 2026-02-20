@@ -1,11 +1,46 @@
 """Wizard-style assessment page for CoSAI Risk Map."""
+import re
+import logging
+
 import streamlit as st
 
 from app.ui_utils import render_chips, render_info_box, render_step_indicator, reset_assessment
+from app.storage import (
+    is_database_ready,
+    load_ai_inventory_submission,
+    load_self_assessment_submission,
+    save_self_assessment_submission,
+)
+
+logger = logging.getLogger(__name__)
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 STEP_LABELS = ["Setup", "Context", "Risk Questions", "Review"]
+
+
+def _format_prefill_reason(reason: str) -> str:
+    """Turn raw prefill reason into readable markdown (bullets, clean list values)."""
+    if not reason or not reason.strip():
+        return ""
+    # Replace " in ['a','b']" with " = one of: a, b" (extract quoted items)
+    def _clean_list(match):
+        raw = match.group(1)
+        items = re.findall(r"[\"']([^\"']*)[\"']", raw)
+        return " = one of: " + ", ".join(items) if items else ""
+    text = re.sub(r"\s+in\s+\[(.*?)\]", _clean_list, reason, flags=re.DOTALL)
+    # Split by OR / AND and emit bullets
+    clauses = re.split(r"\s+OR\s+|\s+AND\s+", text)
+    bullets = []
+    for c in clauses:
+        c = c.strip()
+        if not c:
+            continue
+        if c == "...":
+            bullets.append("- *(other conditions)*")
+        else:
+            bullets.append(f"- {c}")
+    return "\n".join(bullets) if bullets else reason
 
 
 def _format_answer_label(value):
@@ -38,9 +73,84 @@ def _fmt_use_case(label: str) -> str:
     return spaced.replace(" Or ", " or ").title()
 
 
+def _clear_assessment_widget_state() -> None:
+    """Clear widget-backed assessment state before loading saved records."""
+    for key in list(st.session_state.keys()):
+        if key in ("assessment_uc", "assessment_personas") or key.startswith(("ctx_", "rsk_")):
+            del st.session_state[key]
+
+
+def _render_db_controls() -> None:
+    """Render load-by-ID controls for assessment persistence."""
+    if not is_database_ready():
+        st.caption(
+            "PostgreSQL persistence is disabled. Set `DATABASE_URL` or "
+            "`PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD` to enable save/load by ID."
+        )
+        return
+
+    with st.expander("PostgreSQL persistence", expanded=False):
+        current_id = st.session_state.get("_assessment_record_id")
+        if current_id:
+            st.caption(f"Current assessment ID: `{current_id}`")
+
+        load_id = st.text_input(
+            "Load assessment by ID",
+            key="assessment_db_load_id",
+            placeholder="ASMT-XXXXXXXXXX",
+        ).strip()
+
+        if st.button("Load Assessment", use_container_width=True, key="assessment_db_load_button"):
+            if not load_id:
+                st.warning("Please enter an assessment ID.")
+                return
+
+            try:
+                record = load_self_assessment_submission(load_id)
+            except Exception:
+                logger.exception("Failed loading self-assessment id=%s", load_id)
+                st.error("Failed to load assessment from PostgreSQL.")
+                return
+
+            if not record:
+                st.warning(f"No assessment record found for ID `{load_id}`.")
+                return
+
+            st.session_state.answers = record.get("answers", {})
+            st.session_state.selected_personas = record.get("selected_personas", [])
+            st.session_state.selected_use_cases = record.get("selected_use_cases", [])
+            st.session_state.vayu_result = record.get("vayu_result") or None
+            st.session_state.relevant_risks = record.get("relevant_risks", [])
+            st.session_state.recommended_controls = record.get("recommended_controls", [])
+            st.session_state["_assessment_record_id"] = record.get("assessment_id")
+
+            linked_use_case_id = record.get("ai_inventory_use_case_id")
+            if linked_use_case_id:
+                try:
+                    inv_record = load_ai_inventory_submission(linked_use_case_id)
+                except Exception:
+                    logger.exception(
+                        "Failed loading linked AI inventory id=%s", linked_use_case_id
+                    )
+                    inv_record = None
+                if inv_record:
+                    st.session_state["inventory_data"] = inv_record.get("payload", {})
+                    for key in list(st.session_state.keys()):
+                        if isinstance(key, str) and key.startswith("inventory_repeat_blocks_"):
+                            del st.session_state[key]
+                    for block_id, rows in inv_record.get("repeat_blocks", {}).items():
+                        if isinstance(rows, list):
+                            st.session_state[f"inventory_repeat_blocks_{block_id}"] = rows
+
+            st.session_state.assessment_step = 0
+            _clear_assessment_widget_state()
+            st.success(f"Loaded assessment `{load_id}`.")
+            st.rerun()
+
+
 def _question_widget(
     question: dict, loader, prefix: str, idx: int, total: int,
-    *, prefilled: bool = False,
+    *, prefilled: bool = False, prefill_reason: str = "",
 ):
     """Render one question card with radio selector.
 
@@ -71,13 +181,19 @@ def _question_widget(
     if len(text_items) > 1:
         st.caption(loader.format_text_list(text_items[1:]))
 
+    if prefilled and prefill_reason:
+        formatted = _format_prefill_reason(prefill_reason)
+        if formatted:
+            with st.expander("From inventory", expanded=False):
+                st.markdown(formatted)
+
     answers_list = question.get("answers") or []
     labels = _extract_answer_labels(answers_list)
     if not labels:
         return
 
     current = st.session_state.answers.get(q_id)
-    idx_sel = labels.index(current) if current in labels else None
+    idx_sel = labels.index(current) if current and current in labels else 0
 
     selected = st.radio(
         "Your answer",
@@ -99,7 +215,11 @@ def _get_prefill_data(loader) -> dict:
     inventory_data = st.session_state.get("inventory_data", {})
     has_data = inventory_data and any(v for v in inventory_data.values() if v)
     if not has_data:
-        return {"facts": {}, "prefilled_answers": {}, "prefilled_use_cases": [], "prefilled_personas": [], "hidden_questions": set()}
+        return {
+            "facts": {}, "prefilled_answers": {}, "prefilled_use_cases": [],
+            "prefilled_personas": [], "hidden_questions": set(),
+            "prefill_reasons": {"use_cases": {}, "personas": {}, "answers": {}},
+        }
 
     repeat_blocks = {}
     for k in st.session_state:
@@ -113,6 +233,7 @@ def _get_prefill_data(loader) -> dict:
 
 def _apply_prefills(prefill_data: dict):
     """Auto-populate session state from prefill data (only for empty slots)."""
+    n_before = len(st.session_state.answers)
     for q_id, answer in prefill_data.get("prefilled_answers", {}).items():
         if q_id not in st.session_state.answers:
             st.session_state.answers[q_id] = answer
@@ -123,13 +244,15 @@ def _apply_prefills(prefill_data: dict):
     if not st.session_state.selected_personas and prefill_data.get("prefilled_personas"):
         st.session_state.selected_personas = list(prefill_data["prefilled_personas"])
 
+    n_after = len(st.session_state.answers)
+    if n_after > n_before:
+        logger.info("Applied %d prefilled answers from inventory", n_after - n_before)
+
 
 # ── Step renderers ───────────────────────────────────────────────────────────
 
 def _step_setup(loader, prefill_data: dict):
     """Step 0 – use cases + persona selection."""
-    has_prefill = bool(prefill_data.get("prefilled_use_cases") or prefill_data.get("prefilled_personas"))
-
     # ─ Use cases ─
     st.subheader("Select your use cases")
     vayu_uc = loader.get_vayu_use_cases()
@@ -143,20 +266,24 @@ def _step_setup(loader, prefill_data: dict):
         if lbl:
             uc_options[_fmt_use_case(lbl)] = lbl
 
-    if has_prefill and prefill_data.get("prefilled_use_cases"):
-        prefilled_uc_labels = set(prefill_data["prefilled_use_cases"])
-        prefilled_display = [n for n, v in uc_options.items() if v in prefilled_uc_labels]
-        if prefilled_display:
-            st.markdown(
-                f'<div class="prefill-badge">Prefilled from AI Inventory: '
-                f'<strong>{", ".join(prefilled_display)}</strong></div>',
-                unsafe_allow_html=True,
-            )
+    reasons = prefill_data.get("prefill_reasons", {}).get("use_cases", {})
+    prefilled_uc_labels = set(prefill_data.get("prefilled_use_cases", []))
+    prefilled_display = [n for n, v in uc_options.items() if v in prefilled_uc_labels]
+    if prefilled_display:
+        reason_lines = [f"<strong>{n}</strong>: {reasons.get(uc_options[n], '—')}" for n in prefilled_display]
+        st.markdown(
+            '<div class="prefill-badge">Prefilled from AI Inventory: '
+            + "<br>".join(reason_lines) + "</div>",
+            unsafe_allow_html=True,
+        )
 
+    uc_key = "assessment_uc"
+    if uc_key not in st.session_state:
+        st.session_state[uc_key] = [n for n in uc_options if uc_options[n] in st.session_state.selected_use_cases]
     selected_names = st.multiselect(
         "Use cases",
         options=list(uc_options.keys()),
-        default=[n for n in uc_options if uc_options[n] in st.session_state.selected_use_cases],
+        key=uc_key,
         label_visibility="collapsed",
         placeholder="Pick one or more use cases…",
     )
@@ -191,20 +318,24 @@ def _step_setup(loader, prefill_data: dict):
         st.error("No roles available.")
         return False
 
-    if has_prefill and prefill_data.get("prefilled_personas"):
-        prefilled_pids = set(prefill_data["prefilled_personas"])
-        prefilled_display = [n for n, v in persona_opts.items() if v in prefilled_pids]
-        if prefilled_display:
-            st.markdown(
-                f'<div class="prefill-badge">Prefilled from AI Inventory: '
-                f'<strong>{", ".join(prefilled_display)}</strong></div>',
-                unsafe_allow_html=True,
-            )
+    persona_reasons = prefill_data.get("prefill_reasons", {}).get("personas", {})
+    prefilled_pids = set(prefill_data.get("prefilled_personas", []))
+    prefilled_persona_display = [n for n, v in persona_opts.items() if v in prefilled_pids]
+    if prefilled_persona_display:
+        reason_lines = [f"<strong>{n}</strong>: {persona_reasons.get(persona_opts[n], '—')}" for n in prefilled_persona_display]
+        st.markdown(
+            '<div class="prefill-badge">Prefilled from AI Inventory: '
+            + "<br>".join(reason_lines) + "</div>",
+            unsafe_allow_html=True,
+        )
 
+    persona_key = "assessment_personas"
+    if persona_key not in st.session_state:
+        st.session_state[persona_key] = [n for n in persona_opts if persona_opts[n] in st.session_state.selected_personas]
     selected_persona_names = st.multiselect(
         "Roles",
         options=list(persona_opts.keys()),
-        default=[n for n in persona_opts if persona_opts[n] in st.session_state.selected_personas],
+        key=persona_key,
         label_visibility="collapsed",
         placeholder="Pick one or more roles…",
     )
@@ -243,6 +374,7 @@ def _step_context(loader, prefill_data: dict):
     st.progress(answered_all / total_all if total_all else 0)
 
     # Prefilled section (collapsed)
+    answer_reasons = prefill_data.get("prefill_reasons", {}).get("answers", {})
     if prefilled_qs:
         with st.expander(
             f"Prefilled from AI Inventory ({len(prefilled_qs)} questions)",
@@ -250,7 +382,8 @@ def _step_context(loader, prefill_data: dict):
         ):
             st.caption("These answers were derived from your AI Inventory. Expand to review or edit.")
             for idx, q in enumerate(prefilled_qs, 1):
-                _question_widget(q, loader, "ctx_pf", idx, len(prefilled_qs), prefilled=True)
+                reason = answer_reasons.get(q.get("id", ""), "")
+                _question_widget(q, loader, "ctx_pf", idx, len(prefilled_qs), prefilled=True, prefill_reason=reason)
 
     # Manual questions
     if manual_qs:
@@ -291,6 +424,7 @@ def _step_risk_questions(loader, prefill_data: dict):
     st.progress(answered_all / total_all if total_all else 0)
 
     # Prefilled section (collapsed)
+    answer_reasons = prefill_data.get("prefill_reasons", {}).get("answers", {})
     if prefilled_qs:
         with st.expander(
             f"Prefilled from AI Inventory ({len(prefilled_qs)} questions)",
@@ -298,7 +432,8 @@ def _step_risk_questions(loader, prefill_data: dict):
         ):
             st.caption("These answers were derived from your AI Inventory. Expand to review or edit.")
             for idx, q in enumerate(prefilled_qs, 1):
-                _question_widget(q, loader, "rsk_pf", idx, len(prefilled_qs), prefilled=True)
+                reason = answer_reasons.get(q.get("id", ""), "")
+                _question_widget(q, loader, "rsk_pf", idx, len(prefilled_qs), prefilled=True, prefill_reason=reason)
                 q_personas = q.get("personas", [])
                 if q_personas:
                     names = [loader.personas.get(p, {}).get("title", p) for p in q_personas]
@@ -336,6 +471,7 @@ def _step_review(loader):
         risks = []
 
     controls = loader.get_controls_for_risks(risks) if risks else []
+    logger.info("Assessment review: tier=%s, risks=%d, controls=%d", vayu.get("label"), len(risks), len(controls))
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Questions Answered", len(st.session_state.answers))
@@ -364,12 +500,54 @@ def _step_review(loader):
             "You can still view results, but answering all gives better insights."
         )
 
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
+    col_save, col_view, _ = st.columns([1, 1, 1])
+
+    with col_save:
+        if is_database_ready():
+            if st.button("Save Assessment", use_container_width=True):
+                ai_inventory_use_case_id = (st.session_state.get("inventory_data") or {}).get("useCaseId")
+                try:
+                    assessment_id = save_self_assessment_submission(
+                        assessment_id=st.session_state.get("_assessment_record_id"),
+                        ai_inventory_use_case_id=ai_inventory_use_case_id,
+                        selected_personas=st.session_state.selected_personas,
+                        selected_use_cases=st.session_state.selected_use_cases,
+                        answers=st.session_state.answers,
+                        vayu_result=vayu,
+                        relevant_risks=risks,
+                        recommended_controls=[c.get("id") for c in controls],
+                    )
+                    st.session_state["_assessment_record_id"] = assessment_id
+                    st.success(f"Assessment saved to PostgreSQL with ID `{assessment_id}`.")
+                except Exception:
+                    logger.exception("Failed saving self-assessment to PostgreSQL")
+                    st.error("Could not save assessment to PostgreSQL.")
+        else:
+            st.caption("Configure PostgreSQL to persist assessment records by ID.")
+
+    with col_view:
         if st.button("View Results", type="primary", use_container_width=True):
+            if is_database_ready():
+                ai_inventory_use_case_id = (st.session_state.get("inventory_data") or {}).get("useCaseId")
+                try:
+                    assessment_id = save_self_assessment_submission(
+                        assessment_id=st.session_state.get("_assessment_record_id"),
+                        ai_inventory_use_case_id=ai_inventory_use_case_id,
+                        selected_personas=st.session_state.selected_personas,
+                        selected_use_cases=st.session_state.selected_use_cases,
+                        answers=st.session_state.answers,
+                        vayu_result=vayu,
+                        relevant_risks=risks,
+                        recommended_controls=[c.get("id") for c in controls],
+                    )
+                    st.session_state["_assessment_record_id"] = assessment_id
+                except Exception:
+                    logger.exception("Failed auto-saving self-assessment before results")
+
             st.session_state.vayu_result = vayu
             st.session_state.relevant_risks = risks
             st.session_state.recommended_controls = [c.get("id") for c in controls]
+            logger.info("Assessment complete: navigating to Results, tier=%s", vayu.get("label"))
             st.session_state.current_page = "Results"
             st.rerun()
 
@@ -379,6 +557,7 @@ def _step_review(loader):
 def render_assessment():
     """Render the wizard-style assessment."""
     st.title("Risk Assessment")
+    _render_db_controls()
 
     step = st.session_state.get("assessment_step", 0)
     render_step_indicator(STEP_LABELS, step)

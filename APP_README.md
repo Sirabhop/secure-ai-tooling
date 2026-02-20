@@ -58,8 +58,46 @@ streamlit_app.py            # Main application entry point
 3. System maps risks to applicable controls
 4. User can view detailed risk and control information
 
+## PostgreSQL Persistence (Optional)
+
+This app can persist AI Inventory and Self-Assessment records to PostgreSQL and load them back by ID.
+
+1. Initialize tables:
+```bash
+psql "$DATABASE_URL" -f scripts/sql/init_postgresql.sql
+```
+
+2. Set one of:
+```bash
+export DATABASE_URL="postgresql://user:password@host:5432/dbname"
+```
+or
+```bash
+export PGHOST=localhost
+export PGPORT=5432
+export PGDATABASE=cosai
+export PGUSER=postgres
+export PGPASSWORD=postgres
+export PGSSLMODE=prefer
+```
+
+3. Run the app:
+```bash
+streamlit run streamlit_app.py
+```
+
+4. Generate ER diagram (online from live DB schema):
+```bash
+python scripts/generate_er_diagram.py --schema public
+```
+
+5. Generate ER diagram (offline from SQL file, no DB needed):
+```bash
+python scripts/generate_er_diagram.py --sql-file scripts/sql/init_postgresql.sql
+```
+
 ## Notes
 
-- Assessment answers are stored in session state (not persisted)
-- The application dynamically filters questions based on selected personas
-- Risk relevance is calculated based on answer values matching the `relevance` criteria in the self-assessment YAML
+- If DB settings are not configured, data remains in Streamlit session state only.
+- The application dynamically filters questions based on selected personas.
+- Risk relevance is calculated based on answer values matching the `relevance` criteria in the self-assessment YAML.

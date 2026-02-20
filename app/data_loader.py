@@ -250,6 +250,101 @@ class RiskMapDataLoader:
             return all(self._eval_routing_condition(c, data, flags, repeat_blocks) for c in when["all"])
         return False
 
+    def _collect_when_fields(self, when: dict) -> set:
+        """Recursively collect 'field' keys from a routing when condition."""
+        out: set = set()
+        if "field" in when:
+            out.add(when["field"])
+        for key in ("any", "all"):
+            for c in when.get(key, []):
+                out |= self._collect_when_fields(c)
+        return out
+
+    def _get_field_label(self, field_key: str) -> str:
+        """Resolve inventory field key to human-readable label from schema."""
+        schema = self.ai_inventory_schema
+        for step in schema.get("steps", []):
+            for f in step.get("fields", []):
+                if f.get("key") == field_key:
+                    return f.get("label", field_key)
+            for sec in step.get("sections", []):
+                for f in sec.get("fields", []):
+                    if f.get("key") == field_key:
+                        return f.get("label", field_key)
+        return field_key
+
+    def _get_fact_origin(
+        self, fact_name: str, fact_value: Any, inventory_data: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Trace a fact value back to the inventory field(s) that drove it."""
+        if not inventory_data:
+            return ""
+        routing = self.routing
+        rules = routing.get("factRules", [])
+        fields_used: set = set()
+        for rule in rules:
+            set_facts = rule.get("setFacts", {})
+            if fact_name not in set_facts:
+                continue
+            fields_used |= self._collect_when_fields(rule.get("when", {}))
+        if not fields_used:
+            return ""
+        parts = []
+        for fk in sorted(fields_used):
+            val = inventory_data.get(fk)
+            if val is None or val == "":
+                continue
+            label = self._get_field_label(fk)
+            if isinstance(val, list):
+                val = ", ".join(str(x) for x in val)
+            parts.append(f"{label} = \"{val}\"")
+        return " → ".join(parts) if parts else ""
+
+    def _format_when_reason(
+        self, when: dict, facts: Dict[str, Any], inventory_data: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Format a 'when' condition into a short human-readable reason string.
+        For fact-based conditions, traces back to inventory field(s) when possible.
+        """
+        parts: List[str] = []
+        if "field" in when:
+            f = when["field"]
+            v = inventory_data.get(f) if inventory_data else None
+            label = self._get_field_label(f) if inventory_data else f
+            if "equals" in when:
+                parts.append(f"{label} = \"{when['equals']}\"")
+            elif "in" in when:
+                parts.append(f"{label} in {when['in']}")
+            elif "exists" in when:
+                parts.append(f"{label} exists = {when['exists']}")
+            else:
+                parts.append(f"{label} = \"{v}\"")
+        elif "fact" in when:
+            f = when["fact"]
+            v = facts.get(f)
+            origin = self._get_fact_origin(f, v, inventory_data)
+            if origin:
+                return origin
+            if "equals" in when:
+                parts.append(f"{f} = {when['equals']}")
+            elif "in" in when:
+                parts.append(f"{f} in {when['in']}")
+            else:
+                parts.append(f"{f} = {v}")
+        elif "any" in when:
+            for c in when["any"][:2]:  # max 2 for brevity
+                parts.append(self._format_when_reason(c, facts, inventory_data))
+            if len(when["any"]) > 2:
+                parts.append("...")
+            return " OR ".join(parts)
+        elif "all" in when:
+            for c in when["all"][:2]:
+                parts.append(self._format_when_reason(c, facts, inventory_data))
+            if len(when["all"]) > 2:
+                parts.append("...")
+            return " AND ".join(parts)
+        return " OR ".join(parts) if parts else "—"
+
     def _eval_question_condition(
         self, when: dict, facts: Dict[str, Any], inventory_data: Optional[Dict[str, Any]] = None,
     ) -> bool:
@@ -328,32 +423,42 @@ class RiskMapDataLoader:
         empty = {
             "facts": {}, "prefilled_answers": {}, "prefilled_use_cases": [],
             "prefilled_personas": [], "hidden_questions": set(),
+            "prefill_reasons": {"use_cases": {}, "personas": {}, "answers": {}},
         }
         if not inventory_data:
             return empty
 
         facts = self.compute_routing_facts(inventory_data, repeat_blocks)
+        logger.info("Computed routing facts: %d active", sum(1 for v in facts.values() if v))
         routing = self.routing
 
         prefilled_answers: Dict[str, str] = {}
         prefilled_use_cases: List[str] = []
         prefilled_personas: List[str] = []
         hidden_questions: set = set()
+        use_case_reasons: Dict[str, str] = {}
+        persona_reasons: Dict[str, str] = {}
+        answer_reasons: Dict[str, str] = {}
 
         for route in routing.get("assessmentRouting", []):
             # Use case prefill
             uc_cfg = route.get("prefill", {}).get("useCases", {})
             if uc_cfg:
-                source_val = inventory_data.get(uc_cfg.get("sourceField", ""))
+                source_field = uc_cfg.get("sourceField", "")
+                source_val = inventory_data.get(source_field)
                 mapped = uc_cfg.get("mapping", {}).get(source_val)
                 if mapped:
                     prefilled_use_cases.append(mapped)
+                    use_case_reasons[mapped] = f"{source_field} = \"{source_val}\""
 
             # Persona prefill
             for pid, pcond in route.get("personas", {}).items():
                 fact_key = pcond.get("fact", "")
                 if fact_key and facts.get(fact_key) == pcond.get("equals"):
                     prefilled_personas.append(pid)
+                    # Persona facts derive from modelCreator; show that chain
+                    model_val = inventory_data.get("modelCreator")
+                    persona_reasons[pid] = f"modelCreator = \"{model_val}\""
 
             # Question rules: visibility + answer prefill
             for qr in route.get("questionRules", []):
@@ -376,15 +481,26 @@ class RiskMapDataLoader:
                             prefilled_answers[q_id] = "No"
                         else:
                             prefilled_answers[q_id] = str(answer)
+                        answer_reasons[q_id] = self._format_when_reason(when, facts, inventory_data)
                         break
 
-        return {
+        result = {
             "facts": facts,
             "prefilled_answers": prefilled_answers,
             "prefilled_use_cases": prefilled_use_cases,
             "prefilled_personas": prefilled_personas,
             "hidden_questions": hidden_questions,
+            "prefill_reasons": {
+                "use_cases": use_case_reasons,
+                "personas": persona_reasons,
+                "answers": answer_reasons,
+            },
         }
+        logger.info(
+            "Prefill from inventory: personas=%s, use_cases=%s, answers=%d, hidden=%d",
+            prefilled_personas, prefilled_use_cases, len(prefilled_answers), len(hidden_questions),
+        )
+        return result
 
     def has_load_errors(self) -> bool:
         """Check if there were any errors during data loading."""
@@ -516,14 +632,16 @@ class RiskMapDataLoader:
                     escalated_rules.append(rule.get('text', rule.get('id', '')))
 
         label = next((t['label'] for t in config.get('tiers', []) if t['value'] == final_value), 'low')
-        return {
+        result = {
             'tier': final_value,
             'label': label,
             'baselineTier': baseline_value,
             'escalatedRules': escalated_rules,
             'method': config.get('scoring', {}).get('finalTier', {}).get('method', []),
         }
-    
+        logger.info("Vayu tier: %s (baseline=%s, escalated=%d)", label, baseline_value, len(escalated_rules))
+        return result
+
     def calculate_relevant_risks(self, answers: Dict[str, str], selected_personas: List[str]) -> List[str]:
         """Calculate which risks are relevant based on answers."""
         if not answers or not selected_personas:
@@ -554,8 +672,10 @@ class RiskMapDataLoader:
                 risks = question.get('risks', [])
                 if risks:
                     relevant_risks.update(risks)
-        
-        return sorted(relevant_risks)
+
+        result = sorted(relevant_risks)
+        logger.info("Relevant risks: %d risks for personas=%s -> %s", len(result), selected_personas, result[:10])
+        return result
     
     def get_controls_for_risks(self, risk_ids: List[str]) -> List[Dict[str, Any]]:
         """Get all controls that address the given risks."""
@@ -585,6 +705,50 @@ class RiskMapDataLoader:
         # Filter out None values and join with spaces
         return " ".join(str(item) for item in text_list if item)
     
+    # ── Mock prefill scenarios ─────────────────────────────────────────────
+
+    def load_mock_prefills(self) -> List[Dict[str, Any]]:
+        """Load mock prefill scenarios from mock-prefills.yaml."""
+        try:
+            data = self.load_yaml("mock-prefills.yaml")
+            scenarios = data.get("scenarios", [])
+            logger.info("Loaded %d mock prefill scenarios: %s", len(scenarios), [s.get("id") for s in scenarios])
+            return scenarios
+        except DataLoadError:
+            logger.warning("Mock prefills not available (mock-prefills.yaml)")
+            return []
+
+    @staticmethod
+    def flatten_inventory_scenario(scenario: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, list]]:
+        """Flatten a mock scenario's inventory into (flat_data, repeat_blocks).
+
+        The UI stores all non-repeating fields in a single flat dict keyed by
+        field ``key`` and repeating-block rows under separate session-state keys.
+        """
+        inv = scenario.get("inventory", {})
+        flat: Dict[str, Any] = {}
+        repeat_blocks: Dict[str, list] = {}
+
+        for step_key, step_val in inv.items():
+            if step_val is None:
+                continue
+            if isinstance(step_val, dict):
+                # Repeating blocks (step4.models, step6.dataSources)
+                for k, v in step_val.items():
+                    if k == "models":
+                        repeat_blocks["block4Models"] = list(v) if isinstance(v, list) else []
+                    elif k == "dataSources":
+                        repeat_blocks["block6DataSources"] = list(v) if isinstance(v, list) else []
+                    elif isinstance(v, dict):
+                        # Nested section (sec2a, sec3b, etc.)
+                        flat.update(v)
+                    else:
+                        flat[k] = v
+            else:
+                flat[step_key] = step_val
+
+        return flat, repeat_blocks
+
     def get_risk_details(self, risk_id: str) -> Optional[Dict[str, Any]]:
         """Get detailed information about a risk."""
         return self.risks.get(risk_id)

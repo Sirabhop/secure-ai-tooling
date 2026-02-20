@@ -244,6 +244,7 @@ def reset_assessment():
         "vayu_result": None,
         "relevant_risks": [],
         "recommended_controls": [],
+        "_assessment_record_id": None,
     }
     for key, default in _ASSESSMENT_KEYS.items():
         st.session_state[key] = default

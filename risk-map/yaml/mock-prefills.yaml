@@ -1,0 +1,467 @@
+schemaVersion: "1.0"
+purpose: >
+  Ready-to-use prefill datasets for UI demos and integration tests.
+  Each scenario populates the AI inventory only. Assessment is left for the user.
+
+scenarios:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Scenario 1 — RM Copilot: Credit Write-Up Assistant
+  #   LLM + RAG, model consumer only, internal, medium Vayu tier
+  #   Triggers: needsRetrievalStep, needsDataSourcesStep, llmMode, hasCustomAppCode
+  # ─────────────────────────────────────────────────────────────────────────────
+  - id: "rmCopilot"
+    title: "RM Copilot – Credit Write-Up Assistant"
+    description: >
+      Internal LLM-powered assistant that helps Relationship Managers draft
+      credit write-ups by retrieving bank credit policy documents and customer
+      financial statements.  Uses Google Gemini via API with a vector-store RAG
+      pipeline.  No agentic actions; output is always reviewed by the RM before
+      submission.
+
+    inventory:
+      step1:
+        useCaseName: "RM Copilot – Credit Write-Up Assistant"
+        businessUnit: "Wholesale Banking"
+        productOrProcessName: "RM Desktop"
+        businessOwner: "Somchai P."
+        systemOwner: "Nattapong K."
+        linkedArtifacts: |
+          Jira epic: WB-4521
+          Repo: gitlab.internal/wb/rm-copilot
+          Confluence: https://wiki.internal/display/WB/RM+Copilot
+        modelCreator: "No model creation, use existing model"
+        modelUsage: "Third party API"
+        applicationImplementationOwnership: "Bank built and operated"
+        usesRetrievalRag: "Yes"
+        usesToolsOrIntegrations: "Yes"
+        toolActionability: "Read only"
+        usesNonPublicDataOrStoresUserInput: "Yes"
+        outputPersistenceRouting: "Stored in customer record or case system"
+        primaryRuntimeModelTypes:
+          - "LLM text"
+          - "Embedding model"
+
+      step2:
+        sec2a:
+          audienceScope: "Internal only"
+          domain: "Employee facing"
+          usecaseCategory: "Internal copilot or service with sensitive data"
+          interactionChannel:
+            - "Chat interface"
+            - "Document analysis"
+          triggerEvent: "Employee initiated"
+        sec2b:
+          aiCapabilityType:
+            - "Retrieval"
+            - "Generation"
+            - "Extraction"
+        sec2c:
+          inputModalities:
+            - "Text"
+            - "Files like PDF or DOCX"
+          inputSource: "User typed"
+        sec2d:
+          outputModality:
+            - "Text"
+          outputGenerationMode: "Retrieval plus generation"
+          decisionAutomationLevel: "Recommend with human decision"
+          humanReviewPoint: "Pre action review"
+          citationRequirement: "Always cite sources"
+          outputPersistence: "Stored in customer record or case system"
+        sec2e:
+          accessSurface: "Internal authenticated"
+          apiExposure: "Internal API only"
+          authenticationMechanism: "SSO"
+          expectedPeakTraffic: "Medium"
+
+      step3:
+        sec3a:
+          outputConsumers:
+            - "Employee"
+          affectedParty: "Employees and customers"
+          escalationPathAvailable: "Always available"
+        sec3b:
+          supportedLanguages:
+            - "Thai"
+            - "English"
+            - "Thai and English mixed"
+
+      step4:
+        models:
+          - modelName: "gemini-2.5-flash"
+            modelKind: "LLM text"
+            modelType: "Closed model via API"
+            modelFamilyOrCatalogName: "Gemini"
+            modelProvider: "Google"
+            hostingResponsibility: "Vendor managed"
+            hostingEnvironment: "Cloud"
+            cloudRegion:
+              - "asia-southeast1"
+            dataSentToModelProvider:
+              - "Prompts or user messages"
+              - "Retrieved context snippets"
+              - "System prompts"
+            externalProviderRetention: "Retention for abuse monitoring only"
+            externalProviderTrainingUse: "No"
+            toolOrSystemIntegrations:
+              - "Bank internal APIs"
+              - "Document repository"
+
+          - modelName: "text-embedding-005"
+            modelKind: "Embedding model"
+            modelType: "Closed model via API"
+            modelFamilyOrCatalogName: "Gecko"
+            modelProvider: "Google"
+            hostingResponsibility: "Vendor managed"
+            hostingEnvironment: "Cloud"
+            cloudRegion:
+              - "asia-southeast1"
+            embeddingVectorDimension: "768"
+            dataSentToModelProvider:
+              - "Prompts or user messages"
+            externalProviderRetention: "No retention"
+            externalProviderTrainingUse: "No"
+            toolOrSystemIntegrations:
+              - "None"
+
+      step5:
+        sec5a:
+          retrievalSourceType: "Vector store"
+          embeddingModelName: "text-embedding-005"
+          refreshMethod: "Event driven"
+
+      step6:
+        dataSources:
+          - dataUsagePhase:
+              - "Retrieval index"
+              - "Inference runtime"
+            dataSourceCategory: "Bank internal unstructured documents"
+            dataFormat: "PDF"
+            dataGranularity: "Document level"
+            dataSensitivityLevel: "Confidential"
+            containsSensitivePersonalData: "Yes"
+            dataRetentionBand: "More than 180 days"
+
+          - dataUsagePhase:
+              - "Application logs or telemetry"
+            dataSourceCategory: "Customer historical interaction logs"
+            dataFormat: "Event logs"
+            dataGranularity: "Conversation turn level"
+            dataSensitivityLevel: "Internal"
+            containsSensitivePersonalData: "No"
+            dataRetentionBand: "31 to 180 days"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Scenario 2 — Real-time Card Fraud Scoring
+  #   Traditional ML, model creator + consumer, on-prem, high Vayu tier
+  #   Triggers: creatorTrainingStepEnabled, traditionalMlMode, needsDataSourcesStep
+  # ─────────────────────────────────────────────────────────────────────────────
+  - id: "fraudScoring"
+    title: "Real-time Card Fraud Scoring"
+    description: >
+      XGBoost-based anomaly detection model that scores every card transaction in
+      real time.  Auto-blocks transactions above the threshold.  Trained in-house
+      on historical transaction data.  Fully on-premise, no external data
+      transmission.
+
+    inventory:
+      step1:
+        useCaseName: "Real-time Card Fraud Scoring"
+        businessUnit: "Retail Banking – Cards"
+        productOrProcessName: "Transaction Monitoring Platform"
+        businessOwner: "Parichat W."
+        systemOwner: "Kittisak T."
+        linkedArtifacts: |
+          Jira epic: RB-7892
+          Repo: gitlab.internal/rb/fraud-scoring
+          MLflow: https://mlflow.internal/fraud-scoring-xgb
+        modelCreator: "Train traditional ML model"
+        modelUsage: "Bank hosted endpoint"
+        applicationImplementationOwnership: "Bank built and operated"
+        usesRetrievalRag: "No"
+        usesToolsOrIntegrations: "No"
+        usesNonPublicDataOrStoresUserInput: "Yes"
+        outputPersistenceRouting: "Stored in application logs"
+        primaryRuntimeModelTypes:
+          - "Anomaly detection"
+
+      step2:
+        sec2a:
+          audienceScope: "Internal only"
+          domain: "Back office operations"
+          usecaseCategory: "Financial crime prevention"
+          interactionChannel:
+            - "Internal dashboard"
+            - "API integration"
+          triggerEvent: "System initiated"
+        sec2b:
+          aiCapabilityType:
+            - "Classification"
+            - "Prediction"
+        sec2c:
+          inputModalities:
+            - "Structured records"
+          inputSource: "Upstream system"
+        sec2d:
+          outputModality:
+            - "Structured data like JSON fields"
+          outputGenerationMode: "Generation only"
+          decisionAutomationLevel: "Auto execute or auto apply"
+          humanReviewPoint: "Post action review"
+          citationRequirement: "No citations"
+          outputPersistence: "Stored in application logs"
+        sec2e:
+          accessSurface: "Internal authenticated"
+          apiExposure: "Internal API only"
+          authenticationMechanism: "Mutual TLS"
+          expectedPeakTraffic: "High"
+
+      step3:
+        sec3a:
+          outputConsumers:
+            - "Employee"
+          affectedParty: "Customers only"
+          escalationPathAvailable: "Always available"
+        sec3b:
+          supportedLanguages:
+            - "English"
+
+      step4:
+        models:
+          - modelName: "fraud-scoring-xgb-v3"
+            modelKind: "Anomaly detection"
+            modelType: "Custom trained model"
+            modelFamilyOrCatalogName: "Other"
+            modelFamilyOtherDetail: "XGBoost 2.1"
+            modelProvider: "Internal model"
+            hostingResponsibility: "Bank managed"
+            hostingEnvironment: "On premise"
+            dataSentToModelProvider:
+              - "No external transmission"
+            externalProviderRetention: "No retention"
+            externalProviderTrainingUse: "No"
+            toolOrSystemIntegrations:
+              - "Bank internal APIs"
+              - "Payments or transaction systems"
+
+      step5: null
+
+      step6:
+        dataSources:
+          - dataUsagePhase:
+              - "Training"
+              - "Evaluation"
+              - "Inference runtime"
+            dataSourceCategory: "Bank internal structured data"
+            dataFormat: "Tabular"
+            dataGranularity: "Record level"
+            dataSensitivityLevel: "Confidential"
+            containsSensitivePersonalData: "Yes"
+            dataRetentionBand: "More than 180 days"
+
+          - dataUsagePhase:
+              - "Inference runtime"
+            dataSourceCategory: "Bank internal structured data"
+            dataFormat: "Tabular"
+            dataGranularity: "Field level"
+            dataSensitivityLevel: "Internal"
+            containsSensitivePersonalData: "No"
+            dataRetentionBand: "Up to 30 days"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Scenario 3 — Customer Chatbot with Voice
+  #   LLM + ASR + TTS, external exposure, agentic actions, high Vayu tier
+  #   Triggers: llmMode, runtimeSpeechMode, hasExternalExposure, hasAgenticAction
+  # ─────────────────────────────────────────────────────────────────────────────
+  - id: "customerChatbot"
+    title: "AI Customer Service Chatbot"
+    description: >
+      Multimodal customer-facing chatbot deployed on mobile banking app and web.
+      Handles account inquiries, complaint filing, and simple transactions via
+      voice and text.  Uses ASR/TTS for voice channel and an LLM with tool-use
+      for backend actions.
+
+    inventory:
+      step1:
+        useCaseName: "AI Customer Service Chatbot"
+        businessUnit: "Digital Banking"
+        productOrProcessName: "KTB Mobile App"
+        businessOwner: "Ariya S."
+        systemOwner: "Thanakrit M."
+        linkedArtifacts: |
+          Jira epic: DB-3150
+          Repo: gitlab.internal/db/ai-chatbot
+          API: https://api.internal/chatbot/v2
+          Runbook: https://wiki.internal/display/DB/Chatbot+Runbook
+        modelCreator: "No model creation, use existing model"
+        modelUsage: "Third party API"
+        applicationImplementationOwnership: "Hybrid bank plus vendor"
+        usesRetrievalRag: "Yes"
+        usesToolsOrIntegrations: "Yes"
+        toolActionability: "Write internal state"
+        usesNonPublicDataOrStoresUserInput: "Yes"
+        outputPersistenceRouting: "Stored in customer record or case system"
+        primaryRuntimeModelTypes:
+          - "LLM text"
+          - "ASR speech to text"
+          - "TTS text to speech"
+          - "Embedding model"
+
+      step2:
+        sec2a:
+          audienceScope: "External only"
+          domain: "Customer facing"
+          usecaseCategory: "Customer communication and service"
+          interactionChannel:
+            - "Chat interface"
+            - "Call center assist"
+          triggerEvent: "Customer initiated"
+        sec2b:
+          aiCapabilityType:
+            - "Retrieval"
+            - "Generation"
+            - "Classification"
+            - "Single step tool use"
+        sec2c:
+          inputModalities:
+            - "Text"
+            - "Audio"
+          inputSource: "User typed"
+        sec2d:
+          outputModality:
+            - "Text"
+            - "Audio"
+          outputGenerationMode: "Retrieval plus generation"
+          decisionAutomationLevel: "Auto execute or auto apply"
+          humanReviewPoint: "No human review"
+          citationRequirement: "Cite when available"
+          outputPersistence: "Stored in customer record or case system"
+        sec2e:
+          accessSurface: "External authenticated"
+          apiExposure: "External API behind authentication"
+          authenticationMechanism: "OAuth or OIDC"
+          expectedPeakTraffic: "High"
+
+      step3:
+        sec3a:
+          outputConsumers:
+            - "Customer"
+          affectedParty: "Customers only"
+          escalationPathAvailable: "Always available"
+        sec3b:
+          supportedLanguages:
+            - "Thai"
+            - "English"
+            - "Thai and English mixed"
+
+      step4:
+        models:
+          - modelName: "gemini-2.5-pro"
+            modelKind: "LLM text"
+            modelType: "Closed model via API"
+            modelFamilyOrCatalogName: "Gemini"
+            modelProvider: "Google"
+            hostingResponsibility: "Vendor managed"
+            hostingEnvironment: "Cloud"
+            cloudRegion:
+              - "asia-southeast1"
+            dataSentToModelProvider:
+              - "Prompts or user messages"
+              - "Retrieved context snippets"
+              - "System prompts"
+              - "Model outputs"
+            externalProviderRetention: "Retention for abuse monitoring only"
+            externalProviderTrainingUse: "No"
+            toolOrSystemIntegrations:
+              - "Bank internal APIs"
+              - "Customer profile systems"
+              - "CRM or ticketing"
+
+          - modelName: "chirp-2-thai"
+            modelKind: "ASR speech to text"
+            modelType: "Closed model via API"
+            modelFamilyOrCatalogName: "Chirp"
+            modelProvider: "Google"
+            hostingResponsibility: "Vendor managed"
+            hostingEnvironment: "Cloud"
+            cloudRegion:
+              - "asia-southeast1"
+            asrSupportedLanguages:
+              - "Thai"
+              - "English"
+              - "Thai and English mixed"
+            dataSentToModelProvider:
+              - "Prompts or user messages"
+            externalProviderRetention: "Retention for abuse monitoring only"
+            externalProviderTrainingUse: "No"
+            toolOrSystemIntegrations:
+              - "None"
+
+          - modelName: "journey-thai"
+            modelKind: "TTS text to speech"
+            modelType: "Closed model via API"
+            modelFamilyOrCatalogName: "Journey"
+            modelProvider: "Google"
+            hostingResponsibility: "Vendor managed"
+            hostingEnvironment: "Cloud"
+            cloudRegion:
+              - "asia-southeast1"
+            ttsVoiceProfileId: "th-TH-Standard-A"
+            dataSentToModelProvider:
+              - "Model outputs"
+            externalProviderRetention: "No retention"
+            externalProviderTrainingUse: "No"
+            toolOrSystemIntegrations:
+              - "None"
+
+          - modelName: "text-embedding-005"
+            modelKind: "Embedding model"
+            modelType: "Closed model via API"
+            modelFamilyOrCatalogName: "Gecko"
+            modelProvider: "Google"
+            hostingResponsibility: "Vendor managed"
+            hostingEnvironment: "Cloud"
+            cloudRegion:
+              - "asia-southeast1"
+            embeddingVectorDimension: "768"
+            dataSentToModelProvider:
+              - "Prompts or user messages"
+            externalProviderRetention: "No retention"
+            externalProviderTrainingUse: "No"
+            toolOrSystemIntegrations:
+              - "None"
+
+      step5:
+        sec5a:
+          retrievalSourceType: "Hybrid"
+          embeddingModelName: "text-embedding-005"
+          refreshMethod: "Batch schedule"
+
+      step6:
+        dataSources:
+          - dataUsagePhase:
+              - "Retrieval index"
+            dataSourceCategory: "Bank internal unstructured documents"
+            dataFormat: "PDF"
+            dataGranularity: "Document level"
+            dataSensitivityLevel: "Internal"
+            containsSensitivePersonalData: "No"
+            dataRetentionBand: "More than 180 days"
+
+          - dataUsagePhase:
+              - "Inference runtime"
+            dataSourceCategory: "Customer provided input at runtime"
+            dataFormat: "Unstructured text"
+            dataGranularity: "Conversation turn level"
+            dataSensitivityLevel: "Confidential"
+            containsSensitivePersonalData: "Yes"
+            dataRetentionBand: "31 to 180 days"
+
+          - dataUsagePhase:
+              - "Application logs or telemetry"
+            dataSourceCategory: "Customer historical interaction logs"
+            dataFormat: "Event logs"
+            dataGranularity: "Conversation turn level"
+            dataSensitivityLevel: "Internal"
+            containsSensitivePersonalData: "No"
+            dataRetentionBand: "31 to 180 days"

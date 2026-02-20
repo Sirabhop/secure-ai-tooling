@@ -46,6 +46,12 @@ Development tools and utilities for this project.
 - Table formats (full, summary, cross-reference)
 - Output files and debugging
 
+**PostgreSQL ER Generation**
+- `generate_er_diagram.py` introspects PostgreSQL and writes Mermaid ER output
+- Default output: `risk-map/diagrams/postgres-er.mermaid`
+- SQL init script for required tables: `sql/init_postgresql.sql`
+- Offline mode supported: `python scripts/generate_er_diagram.py --sql-file scripts/sql/init_postgresql.sql`
+
 ### CI/CD
 
 **[GitHub Actions Validation](docs/github-actions.md)**

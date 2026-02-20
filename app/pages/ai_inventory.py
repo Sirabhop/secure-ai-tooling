@@ -1,14 +1,21 @@
 """AI Inventory intake form page – driven by ai-inventory.yaml schema."""
 from __future__ import annotations
 
+import logging
 import uuid
 from collections import ChainMap
 from typing import Any, Dict, List, Mapping
 
-
 import streamlit as st
 
+from app.storage import (
+    is_database_ready,
+    load_ai_inventory_submission,
+    save_ai_inventory_submission,
+)
 from app.ui_utils import render_step_indicator
+
+logger = logging.getLogger(__name__)
 
 # ── Session-state keys ───────────────────────────────────────────────────────
 _STATE_KEY = "inventory_data"
@@ -20,6 +27,8 @@ _CATALOG_DEFAULTS: Dict[str, List[str]] = {
     "bankOrgList": [
         "Retail Banking",
         "Corporate Banking",
+        "Wholesale Banking",
+        "Digital Banking",
         "Wealth Management",
         "Operations",
         "Technology",
@@ -32,6 +41,12 @@ _CATALOG_DEFAULTS: Dict[str, List[str]] = {
         "Bob Chaiyaphon",
         "Carol Suttirat",
         "David Kiatprasert",
+        "Somchai P.",
+        "Nattapong K.",
+        "Parichat W.",
+        "Kittisak T.",
+        "Ariya S.",
+        "Thanakrit M.",
     ],
     "systemCatalog": [
         "Core Banking",
@@ -45,15 +60,22 @@ _CATALOG_DEFAULTS: Dict[str, List[str]] = {
         "GPT-4o-mini",
         "Claude 3.5 Sonnet",
         "Claude 3.5 Haiku",
+        "Gemini",
         "Gemini 1.5 Pro",
         "Gemini 1.5 Flash",
+        "Gemini 2.5 Flash",
+        "Gemini 2.5 Pro",
         "Gemini 3 Pro",
         "Gemini 3 Flash",
+        "Gecko",
+        "Chirp",
+        "Journey",
         "Llama 3.1 70B",
         "Llama 3.1 8B",
         "Typhoon 1.5",
     ],
     "approvedEmbeddingModelCatalog": [
+        "text-embedding-005",
         "text-embedding-3-large",
         "text-embedding-3-small",
         "text-embedding-ada-002",
@@ -61,6 +83,7 @@ _CATALOG_DEFAULTS: Dict[str, List[str]] = {
         "bge-m3",
     ],
     "approvedCloudRegions": [
+        "asia-southeast1",
         "asia-southeast1 (Singapore)",
         "asia-southeast2 (Jakarta)",
         "us-central1",
@@ -476,6 +499,9 @@ def _render_field(
     if ftype == "selectOne":
         options = _resolve_options(field)
         current = data.get(data_key)
+        # Preserve prefilled values not in catalog (e.g. from mock scenarios)
+        if current and current not in options and current not in ("— Select —", ""):
+            options = [current] + [o for o in options if o != current]
         display_options = ["— Select —"] + options
         idx = (options.index(current) + 1) if current in options else 0
         selected = st.selectbox(label, options=display_options, index=idx, key=widget_key, help=guidance)
@@ -488,6 +514,10 @@ def _render_field(
         current = data.get(data_key) or []
         if not isinstance(current, list):
             current = [current]
+        # Preserve prefilled values not in catalog (e.g. from mock scenarios)
+        extras = [c for c in current if c and c not in options]
+        if extras:
+            options = extras + [o for o in options if o not in extras]
         valid_current = [c for c in current if c in options]
 
         selected = st.multiselect(label, options=options, default=valid_current, key=widget_key, help=guidance)
@@ -620,6 +650,58 @@ def _row_expander_label(idx: int, row_data: dict, name_key: str | None) -> str:
     return base
 
 
+def _render_db_controls(data: Dict[str, Any]) -> None:
+    """Render load-by-ID controls when Postgres is configured."""
+    if not is_database_ready():
+        st.caption(
+            "PostgreSQL persistence is disabled. Set `DATABASE_URL` or "
+            "`PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD` to enable save/load by ID."
+        )
+        return
+
+    with st.expander("PostgreSQL persistence", expanded=False):
+        current_id = data.get("useCaseId")
+        if current_id:
+            st.caption(f"Current inventory ID: `{current_id}`")
+
+        load_id = st.text_input(
+            "Load inventory by ID",
+            key="inv_db_load_id",
+            placeholder="UC-XXXXXXXX",
+        ).strip()
+
+        if st.button("Load Inventory", use_container_width=True, key="inv_db_load_button"):
+            if not load_id:
+                st.warning("Please enter a use case ID.")
+                return
+
+            try:
+                record = load_ai_inventory_submission(load_id)
+            except Exception:
+                logger.exception("Failed loading AI inventory id=%s", load_id)
+                st.error("Failed to load record from PostgreSQL.")
+                return
+
+            if not record:
+                st.warning(f"No inventory record found for ID `{load_id}`.")
+                return
+
+            st.session_state[_STATE_KEY] = record.get("payload", {})
+            for key in list(st.session_state.keys()):
+                if isinstance(key, str) and key.startswith(_REPEAT_KEY):
+                    del st.session_state[key]
+
+            repeat_blocks = record.get("repeat_blocks", {})
+            for block_id, rows in repeat_blocks.items():
+                if isinstance(rows, list):
+                    st.session_state[f"{_REPEAT_KEY}_{block_id}"] = rows
+                    st.session_state[_STATE_KEY][f"_repeat_{block_id}"] = rows
+
+            st.session_state[_STEP_KEY] = 0
+            st.success(f"Loaded inventory record `{load_id}`.")
+            st.rerun()
+
+
 # ── Step renderer ────────────────────────────────────────────────────────────
 
 def _render_step(step: dict, data: Dict[str, Any]) -> None:
@@ -673,6 +755,7 @@ def render_ai_inventory() -> None:
         st.session_state[_STEP_KEY] = 0
 
     data = _inv()
+    _render_db_controls(data)
     repeat_blocks = _get_repeat_blocks_data()
     hidden_steps = _get_hidden_steps_from_display_rules(steps, data, repeat_blocks)
 
@@ -813,9 +896,25 @@ def _handle_submit(visible_steps: List[dict], data: Dict[str, Any]) -> None:
                 st.markdown(f"- {m}")
 
     # Collect repeating block data into the main data dict
-    for k, v in st.session_state.items():
-        if isinstance(k, str) and k.startswith(_REPEAT_KEY):
-            block_id = k.replace(f"{_REPEAT_KEY}_", "")
-            data[f"_repeat_{block_id}"] = v
+    repeat_blocks = _get_repeat_blocks_data()
+    for block_id, rows in repeat_blocks.items():
+        data[f"_repeat_{block_id}"] = rows
 
-    st.success("Inventory entry saved. You can review or edit it anytime.")
+    logger.info("AI inventory submitted: use_case=%s, models=%d", data.get("useCaseName"), len(data.get("_repeat_block4Models", [])))
+    if is_database_ready():
+        try:
+            persisted_id = save_ai_inventory_submission(data, repeat_blocks)
+            st.success(
+                f"Inventory entry saved to PostgreSQL with ID `{persisted_id}`. "
+                "You can load it later by ID."
+            )
+            return
+        except Exception:
+            logger.exception("Failed saving AI inventory to PostgreSQL")
+            st.error("Could not save to PostgreSQL. Data remains in session for this browser tab.")
+            return
+
+    st.success(
+        "Inventory entry saved in session state only. Configure PostgreSQL "
+        "to persist and retrieve by ID."
+    )
