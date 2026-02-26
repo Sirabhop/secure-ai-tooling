@@ -1,4 +1,4 @@
-"""Main Streamlit app for CoSAI Risk Map."""
+"""Main Streamlit app for AI Risk Navigator."""
 import logging
 import sys
 from pathlib import Path
@@ -18,18 +18,18 @@ logger = logging.getLogger(__name__)
 
 sys.path.insert(0, str(Path(__file__).parent))
 from app.data_loader import DataLoadError, RiskMapDataLoader
-from app.ui_utils import inject_custom_css
+from app.ui_utils import inject_custom_css, render_page_header, render_stat_cards
 
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="KTB Risk Navigator",
-    page_icon="🛡️",
+    page_title="AI Risk Navigator",
+    page_icon="🔷",
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
         "Get Help": None,
         "Report a bug": None,
-        "About": "CoSAI Risk Map – Coalition for Secure AI Risk Assessment Tool",
+        "About": "AI Risk Navigator — AI Security Risk Assessment Tool by CoSAI",
     },
 )
 
@@ -77,13 +77,15 @@ def _apply_scenario(sc: dict) -> None:
 
     sc_id = sc.get("id", "unknown")
     flat, repeat_blocks = RiskMapDataLoader.flatten_inventory_scenario(sc)
-    logger.info("Applying mock scenario id=%s, flat_fields=%d, repeat_blocks=%s", sc_id, len(flat), list(repeat_blocks.keys()))
+    logger.info(
+        "Applying mock scenario id=%s, flat_fields=%d, repeat_blocks=%s",
+        sc_id, len(flat), list(repeat_blocks.keys()),
+    )
 
     st.session_state["inventory_data"] = flat
     for block_id, rows in repeat_blocks.items():
         st.session_state[f"inventory_repeat_blocks_{block_id}"] = rows
 
-    # Assessment not mocked - reset to blank so user fills it
     sa = sc.get("selfAssessment", {})
     va = sc.get("vayuAssessment", {})
     if sa or va:
@@ -106,20 +108,22 @@ def _apply_scenario(sc: dict) -> None:
     st.session_state["relevant_risks"] = []
     st.session_state["recommended_controls"] = []
     st.session_state["_assessment_record_id"] = None
-    # Clear assessment widget state so prefill from inventory can take effect
     for k in list(st.session_state.keys()):
         if k in ("assessment_uc", "assessment_personas") or k.startswith(("ctx_", "rsk_")):
             del st.session_state[k]
-    # Clear AI Inventory widget keys so widgets re-init from new inventory_data/repeat_blocks
     _clear_inventory_widget_state()
-    logger.info("Scenario applied: inventory only, personas=%s, use_cases=%s", st.session_state["selected_personas"], st.session_state["selected_use_cases"])
+    logger.info(
+        "Scenario applied: inventory only, personas=%s, use_cases=%s",
+        st.session_state["selected_personas"],
+        st.session_state["selected_use_cases"],
+    )
 
 
 def _clear_inventory_widget_state() -> None:
     """Remove AI Inventory form widget keys so next render uses inventory_data/repeat_blocks."""
     for k in list(st.session_state.keys()):
         if (
-            (k.startswith("step") and "_" in k)  # step1_useCaseName, step2_sec2a_*, etc.
+            (k.startswith("step") and "_" in k)
             or k.startswith("rep_")
             or k.startswith("del_")
             or k.startswith("add_")
@@ -152,10 +156,17 @@ def _clear_scenario() -> None:
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 NAV = ["Home", "AI Inventory", "Assessment", "Results", "Architecture"]
+NAV_ICONS = {"Home": "🏠", "AI Inventory": "📋", "Assessment": "🔍", "Results": "📊", "Architecture": "🏗️"}
 
 with st.sidebar:
-    st.markdown("### 🛡️ CoSAI Risk Map")
-    st.caption("Coalition for Secure AI")
+    st.markdown(
+        '<div class="sidebar-logo">'
+        '<div class="logo-icon">🔷</div>'
+        '<div><div class="logo-text">AI Risk Navigator</div>'
+        '<div class="logo-sub">by CoSAI</div></div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
     st.markdown("---")
 
     try:
@@ -163,10 +174,15 @@ with st.sidebar:
     except ValueError:
         nav_index = 0
 
-    page = st.radio("Navigate", NAV, index=nav_index, label_visibility="collapsed")
+    page = st.radio(
+        "Navigate",
+        NAV,
+        index=nav_index,
+        label_visibility="collapsed",
+        format_func=lambda x: f"{NAV_ICONS.get(x, '')}  {x}",
+    )
     st.session_state.current_page = page
 
-    # Progress summary
     if st.session_state.answers:
         loader = st.session_state.data_loader
         vayu_q = loader.get_vayu_questions()
@@ -182,7 +198,6 @@ with st.sidebar:
             st.progress(answered / total)
             st.caption(f"{answered}/{total} questions answered")
 
-    # Mock scenario loader
     st.markdown("---")
     st.markdown("##### Demo Scenarios")
     loader_sb = st.session_state.data_loader
@@ -221,41 +236,67 @@ with st.sidebar:
 if page == "Home":
     loader = st.session_state.data_loader
 
-    st.title("🛡️ CoSAI Risk Map")
+    # Hero section
     st.markdown(
-        "Identify and mitigate security risks in your AI systems with an "
-        "interactive, guided assessment."
+        '<div class="hero-card">'
+        '<h1>AI Risk Navigator</h1>'
+        '<p>Identify, analyze, and mitigate security risks in your AI systems '
+        'with an interactive, guided assessment powered by the CoSAI Risk Map framework.</p>'
+        '</div>',
+        unsafe_allow_html=True,
     )
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Risks Cataloged", len(loader.risks))
-    col2.metric("Controls Available", len(loader.controls))
-    col3.metric("Frameworks Mapped", 4)
+    # Stats row
+    render_stat_cards([
+        {"icon": "⚠️", "value": len(loader.risks), "label": "Risks Cataloged"},
+        {"icon": "🛡️", "value": len(loader.controls), "label": "Controls Available"},
+        {"icon": "🔗", "value": 4, "label": "Frameworks Mapped"},
+    ])
 
-    st.markdown("---")
-    st.subheader("How it works")
+    st.markdown("")
+
+    # How it works
+    st.markdown(
+        '<div class="section-header">'
+        '<span class="section-icon">📖</span>'
+        '<span class="section-title">How It Works</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
     cols = st.columns(3)
-    info = [
-        ("1. Setup", "Pick your use cases and roles — takes 30 seconds."),
-        ("2. Assess", "Answer context and risk questions tailored to your profile."),
-        ("3. Results", "Get your risk tier, identified risks, and recommended controls."),
+    workflow = [
+        ("1", "Setup", "Pick your use cases and roles — takes about 30 seconds to get started."),
+        ("2", "Assess", "Answer context and risk questions tailored to your specific AI profile."),
+        ("3", "Results", "Get your risk tier, identified risks, and recommended security controls."),
     ]
-    for col, (title, desc) in zip(cols, info):
+    for col, (num, title, desc) in zip(cols, workflow):
         with col:
-            st.markdown(f"**{title}**")
-            st.caption(desc)
+            st.markdown(
+                f'<div class="info-card">'
+                f'<div class="card-title">Step {num}: {title}</div>'
+                f'<div class="card-desc">{desc}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
-    st.markdown("---")
-
+    st.markdown("")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        if st.button("Start Assessment", type="primary", use_container_width=True):
+        if st.button("Start Assessment →", type="primary", use_container_width=True):
             st.session_state.current_page = "Assessment"
             st.session_state.assessment_step = 0
             st.rerun()
 
     if st.session_state.answers:
         st.markdown("---")
+        st.markdown(
+            '<div class="section-header">'
+            '<span class="section-icon">📈</span>'
+            '<span class="section-title">Your Current Assessment</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
         vayu = st.session_state.vayu_result
         if not vayu:
             try:
@@ -270,14 +311,17 @@ if page == "Home":
             )
         except Exception:
             risks = []
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Questions Answered", len(st.session_state.answers))
-        c2.metric("Risk Tier", vayu.get("label", "—").upper())
-        c3.metric("Risks Found", len(risks))
 
+        render_stat_cards([
+            {"icon": "✏️", "value": len(st.session_state.answers), "label": "Questions Answered"},
+            {"icon": "📊", "value": vayu.get("label", "—").upper(), "label": "Risk Tier"},
+            {"icon": "🔴", "value": len(risks), "label": "Risks Found"},
+        ])
+
+        st.markdown("")
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            if st.button("Continue Assessment", use_container_width=True):
+            if st.button("Continue Assessment →", use_container_width=True):
                 st.session_state.current_page = "Assessment"
                 st.rerun()
 
