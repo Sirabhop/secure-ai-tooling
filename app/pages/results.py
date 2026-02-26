@@ -2,18 +2,18 @@
 import streamlit as st
 
 from app.architecture import highlight_nodes, load_mermaid_file, render_mermaid
-from app.ui_utils import render_chips, render_info_box, render_tier_badge, reset_assessment
+from app.ui_utils import render_chips, render_info_box, render_page_header, render_tier_badge, reset_assessment
 
 
 def render_results():
     """Render the combined results page."""
-    st.title("📊 Results")
+    render_page_header("📊", "Results", "Your assessment results with identified risks and recommended controls.")
 
     if not st.session_state.get("answers"):
         render_info_box(
             "Complete the assessment first to see your results.", "warning"
         )
-        if st.button("Go to Assessment", type="primary", use_container_width=True):
+        if st.button("Go to Assessment →", type="primary", use_container_width=True):
             st.session_state.current_page = "Assessment"
             st.rerun()
         return
@@ -52,7 +52,6 @@ def render_results():
         render_tier_badge(tier_label)
     col2.metric("Risks Found", len(relevant_risks))
     col3.metric("Controls", len(controls))
-    # Unique categories
     categories = {
         loader.get_risk_details(rid).get("category", "")
         for rid in relevant_risks

@@ -1,10 +1,10 @@
-"""Wizard-style assessment page for CoSAI Risk Map."""
+"""Wizard-style assessment page for AI Risk Navigator."""
 import re
 import logging
 
 import streamlit as st
 
-from app.ui_utils import render_chips, render_info_box, render_step_indicator, reset_assessment
+from app.ui_utils import render_chips, render_info_box, render_page_header, render_step_indicator, reset_assessment
 from app.storage import (
     is_database_ready,
     load_ai_inventory_submission,
@@ -556,7 +556,7 @@ def _step_review(loader):
 
 def render_assessment():
     """Render the wizard-style assessment."""
-    st.title("Risk Assessment")
+    render_page_header("🔍", "Risk Assessment", "Answer questions to identify risks and get tailored security recommendations.")
     _render_db_controls()
 
     step = st.session_state.get("assessment_step", 0)

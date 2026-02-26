@@ -13,7 +13,7 @@ from app.storage import (
     load_ai_inventory_submission,
     save_ai_inventory_submission,
 )
-from app.ui_utils import render_step_indicator
+from app.ui_utils import render_page_header, render_step_indicator
 
 logger = logging.getLogger(__name__)
 
@@ -731,10 +731,9 @@ def _render_step(step: dict, data: Dict[str, Any]) -> None:
 
 def render_ai_inventory() -> None:
     """Render the AI Inventory intake form."""
-    st.title("AI Inventory")
-    st.caption(
-        "Use-case intake form. Most fields can be prefilled from inventory "
-        "and only require **Confirm** or **Edit**."
+    render_page_header(
+        "📋", "AI Inventory",
+        "Use-case intake form. Most fields can be prefilled from inventory and only require review or edit."
     )
 
     loader = st.session_state.data_loader

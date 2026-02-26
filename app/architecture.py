@@ -175,10 +175,10 @@ def _get_assessment_highlights(loader) -> list[str]:
 
 def render_architecture_page() -> None:
     """Render the full Architecture page in Streamlit."""
-    st.title("🏗️ Architecture")
-    st.markdown(
-        "Explore the AI system architecture — components, security controls, "
-        "and risk mappings — as interactive diagrams."
+    from app.ui_utils import render_page_header
+    render_page_header(
+        "🏗️", "Architecture",
+        "Explore AI system architecture — components, security controls, and risk mappings as interactive diagrams."
     )
 
     loader = st.session_state.get("data_loader")
