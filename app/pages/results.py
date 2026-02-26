@@ -2,6 +2,11 @@
 import streamlit as st
 
 from app.architecture import highlight_nodes, load_mermaid_file, render_mermaid
+from app.export_summary import (
+    build_assessment_export_summary,
+    summary_to_json,
+    summary_to_markdown,
+)
 from app.ui_utils import render_chips, render_info_box, render_page_header, render_tier_badge, reset_assessment
 
 
@@ -43,6 +48,7 @@ def render_results():
 
     controls = loader.get_controls_for_risks(relevant_risks) if relevant_risks else []
     st.session_state.recommended_controls = [c.get("id") for c in controls]
+    export_summary = build_assessment_export_summary(loader, vayu, relevant_risks, controls)
 
     # ── Tier overview ────────────────────────────────────────────────────────
     tier_label = vayu.get("label", "low")
@@ -71,6 +77,9 @@ def render_results():
             "No specific risks identified — your current security posture looks strong. "
             "Consider reviewing general AI security best practices to stay ahead."
         )
+        st.markdown("---")
+        _render_export_section(export_summary)
+        st.markdown("---")
         _render_actions()
         return
 
@@ -138,6 +147,8 @@ def render_results():
         _render_results_architecture(loader, relevant_risks, controls)
 
     st.markdown("---")
+    _render_export_section(export_summary)
+    st.markdown("---")
     _render_actions()
 
 
@@ -196,6 +207,47 @@ def _render_actions():
             reset_assessment()
             st.session_state.current_page = "Assessment"
             st.rerun()
+
+
+def _render_export_section(summary: dict):
+    """Render JSON and markdown exports for the final results summary."""
+    st.markdown("### Export Assessment Summary")
+    st.caption(
+        "Download a summary of risks, controls, practices, and recommended tools. "
+        "Recommended tools are derived from framework mappings."
+    )
+
+    markdown_payload = summary_to_markdown(summary)
+    json_payload = summary_to_json(summary)
+    timestamp = (
+        str(summary.get("generatedAt", ""))
+        .replace("-", "")
+        .replace(":", "")
+        .replace("T", "_")
+        .replace("Z", "")
+    )
+    base_name = f"ai_risk_summary_{timestamp}" if timestamp else "ai_risk_summary"
+
+    col_json, col_md = st.columns(2)
+    with col_json:
+        st.download_button(
+            "Download JSON",
+            data=json_payload,
+            file_name=f"{base_name}.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+    with col_md:
+        st.download_button(
+            "Download Markdown",
+            data=markdown_payload,
+            file_name=f"{base_name}.md",
+            mime="text/markdown",
+            use_container_width=True,
+        )
+
+    with st.expander("Preview export content", expanded=False):
+        st.markdown(markdown_payload)
 
 
 # ── Risk row ─────────────────────────────────────────────────────────────────
