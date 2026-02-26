@@ -92,26 +92,39 @@ def test_summary_to_markdown_renders_key_sections():
         "generatedAt": "2026-02-26T00:00:00Z",
         "riskTier": {"label": "high"},
         "counts": {"risks": 1, "controls": 1, "practices": 1, "recommendedTools": 1},
-        "risks": [{"id": "R1", "title": "Prompt Injection", "category": "Runtime Input Security", "summary": "desc"}],
-        "controls": [{
-            "id": "C1",
-            "title": "Input Validation",
-            "category": "Application",
-            "summary": "control desc",
-            "mitigatesRiskTitles": ["Prompt Injection"],
-        }],
-        "practices": [{
-            "title": "Input Validation",
-            "practice": "Validate prompts.",
-            "ownerRoles": ["Model Creator"],
-            "lifecycleStages": ["runtime"],
-        }],
-        "recommendedTools": [{
-            "name": "OWASP Top 10 for LLM",
-            "description": "tool desc",
-            "mappedItems": ["LLM01"],
-            "reference": "https://owasp.org",
-        }],
+        "risks": [
+            {
+                "id": "R1",
+                "title": "Prompt Injection",
+                "category": "Runtime Input Security",
+                "summary": "desc",
+            }
+        ],
+        "controls": [
+            {
+                "id": "C1",
+                "title": "Input Validation",
+                "category": "Application",
+                "summary": "control desc",
+                "mitigatesRiskTitles": ["Prompt Injection"],
+            }
+        ],
+        "practices": [
+            {
+                "title": "Input Validation",
+                "practice": "Validate prompts.",
+                "ownerRoles": ["Model Creator"],
+                "lifecycleStages": ["runtime"],
+            }
+        ],
+        "recommendedTools": [
+            {
+                "name": "OWASP Top 10 for LLM",
+                "description": "tool desc",
+                "mappedItems": ["LLM01"],
+                "reference": "https://owasp.org",
+            }
+        ],
     }
 
     markdown = summary_to_markdown(summary)
